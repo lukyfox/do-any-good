@@ -21,7 +21,6 @@ class Settings:
     foundry_api_key: str | None = None
     foundry_project: str | None = None
     foundry_model: str | None = None
-    mcp_server_url: str = "http://localhost:8000/mcp/process"
     data_dir: str = "data"
 
     @property
@@ -44,6 +43,5 @@ def get_settings() -> Settings:
         foundry_api_key=os.getenv("FOUNDRY_API_KEY"),
         foundry_project=os.getenv("FOUNDRY_PROJECT"),
         foundry_model=os.getenv("FOUNDRY_MODEL"),
-        mcp_server_url=os.getenv("MCP_SERVER_URL", "http://localhost:8000/mcp/process"),
         data_dir=os.getenv("DAG_DATA_DIR", "data"),
     )

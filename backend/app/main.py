@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from .agent import Agent
 from .config import get_settings
-from .llm_client import LLMClient, get_llm_client, get_structured_response
+from .llm_client import LLMClient, get_llm_client
 from .overview import build_overview
 from .storage import FileStorage, GoodyNotFoundError, GoodyStatus, JournalEntry
 
@@ -21,11 +21,6 @@ app = FastAPI(title="Do Any Good backend")
 class ChatRequest(BaseModel):
     message: str
     history: list[dict] | None = None
-
-
-class ProcessRequest(BaseModel):
-    question: str
-    request_class: str
 
 
 class StatusUpdate(BaseModel):
@@ -123,8 +118,3 @@ async def add_journal(
 @app.get("/journal")
 async def get_journal(storage: Annotated[FileStorage, Depends(get_storage)]) -> dict:
     return {"markdown": storage.read_journal()}
-
-
-@app.post("/mcp/process")
-async def process(req: ProcessRequest) -> dict:
-    return get_structured_response(req.question, req.request_class)

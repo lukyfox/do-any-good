@@ -2,12 +2,10 @@ from backend.app import llm_client
 from backend.app.config import Settings
 from backend.app.llm_client import (
     FoundryResponsesClient,
-    LLMClient,
     LLMResult,
     MockLLMClient,
     ToolCall,
     build_responses_payload,
-    get_structured_response,
     parse_responses,
 )
 
@@ -152,18 +150,3 @@ def test_foundry_complete_posts_and_parses(monkeypatch):
     assert captured["json"]["model"] == "dep"
     assert captured["headers"]["api-key"] == "k"
     assert captured["json"]["tools"][0]["name"] == "t"
-
-
-def test_get_structured_response_mock_envelope(monkeypatch):
-    monkeypatch.setattr(llm_client, "get_settings", lambda: Settings())
-    out = get_structured_response("do good", "decision")
-    assert "do good" in out["response"]["text"]
-
-
-def test_get_structured_response_error(monkeypatch):
-    class Boom(LLMClient):
-        def complete(self, *a, **k):
-            raise RuntimeError("nope")
-
-    monkeypatch.setattr(llm_client, "get_llm_client", lambda: Boom())
-    assert get_structured_response("q", "c")["error"] == "nope"

@@ -180,22 +180,3 @@ def get_llm_client() -> LLMClient:
     if settings.foundry_configured:
         return FoundryResponsesClient(settings)
     return MockLLMClient()
-
-
-def get_structured_response(question: str, request_class: str) -> dict[str, Any]:
-    """Backward-compatible helper for the interim /mcp/process endpoint.
-
-    Superseded by the agent in M4.
-    """
-    messages = [
-        {
-            "role": "system",
-            "content": f"Request class: {request_class}. Suggest safe, helpful good deeds.",
-        },
-        {"role": "user", "content": question},
-    ]
-    try:
-        result = get_llm_client().complete(messages)
-    except Exception as err:  # interim endpoint: surface errors gracefully
-        return {"error": str(err)}
-    return {"response": {"text": result.text, "parsed": result.parsed}}
