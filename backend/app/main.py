@@ -49,6 +49,24 @@ async def chat(
     return {"reply": result.reply, "history": result.history}
 
 
+@app.post("/plan/today")
+async def plan_today(
+    storage: Annotated[FileStorage, Depends(get_storage)],
+    llm: Annotated[LLMClient, Depends(get_agent_llm)],
+) -> dict:
+    goody = Agent(storage, llm).suggest_today()
+    return {"goody": goody.model_dump(mode="json")}
+
+
+@app.post("/plan/week")
+async def plan_week(
+    storage: Annotated[FileStorage, Depends(get_storage)],
+    llm: Annotated[LLMClient, Depends(get_agent_llm)],
+) -> dict:
+    goodies = Agent(storage, llm).suggest_week()
+    return {"goodies": [g.model_dump(mode="json") for g in goodies]}
+
+
 @app.post("/mcp/process")
 async def process(req: ProcessRequest) -> dict:
     return get_structured_response(req.question, req.request_class)

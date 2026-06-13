@@ -11,15 +11,17 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Any
 
 from mcp.shared.memory import create_connected_server_and_client_session as connected
 
 from ..llm_client import LLMClient
 from ..mcp_server import build_mcp
-from ..storage import FileStorage
+from ..storage import FileStorage, Goody
 from .prompts import SYSTEM_PROMPT, profile_context
 from .safety import LLMSafetyChecker, SafetyDecision, SafetyVerdict, refusal_message
+from .suggestions import persist_one, persist_plan, suggest_daily, suggest_weekly
 
 MAX_ITERATIONS = 6
 
@@ -131,3 +133,15 @@ class Agent:
                 reply = "I couldn't complete that in time — could you rephrase?"
 
         return self._turn(history, user_message, reply, tools_called, verdict.decision)
+
+    def suggest_today(self, on: date | None = None) -> Goody:
+        """Generate and persist one planned Goody (defaults to tomorrow)."""
+        on = on or date.today() + timedelta(days=1)
+        suggestion = suggest_daily(self.llm, self.storage.load_profile())
+        return persist_one(self.storage, suggestion, on)
+
+    def suggest_week(self, start: date | None = None) -> list[Goody]:
+        """Generate and persist a 7-day plan (defaults to starting tomorrow)."""
+        start = start or date.today() + timedelta(days=1)
+        suggestions = suggest_weekly(self.llm, self.storage.load_profile())
+        return persist_plan(self.storage, suggestions, start)
