@@ -62,10 +62,10 @@ def client_agent_decision(user_input, history):
     return "mcp"
 
 
-def respond(user_input, history):
-    history = history or []
-    history.append({"role": "user", "content": user_input})
-    decision = client_agent_decision(user_input, history)
+def respond(user_input, history_state):
+    history_state = history_state or []
+    history_state.append({"role": "user", "content": user_input})
+    decision = client_agent_decision(user_input, history_state)
     rationale = None
     if decision == "tool":
         assistant_text = local_tool_get_time()
@@ -77,8 +77,18 @@ def respond(user_input, history):
         if isinstance(assistant_text, dict):
             assistant_text = assistant_text.get("text") or str(assistant_text)
         rationale = "Routed to MCP for full answer"
-    history.append({"role": "assistant", "content": assistant_text})
-    return "", history, decision, rationale
+    history_state.append({"role": "assistant", "content": assistant_text})
+
+    display_history = []
+    last_user = None
+    for msg in history_state:
+        if msg.get("role") == "user":
+            last_user = msg.get("content")
+        elif msg.get("role") == "assistant" and last_user is not None:
+            display_history.append((last_user, msg.get("content")))
+            last_user = None
+
+    return "", display_history, history_state, decision, rationale
 
 
 def start_ui():
@@ -90,10 +100,13 @@ def start_ui():
             send = gr.Button("Send")
             log_toggle = gr.Checkbox(label="Enable decision logging", value=False)
 
-        # wrap respond to include logging
+        # wrap respond to include logging and rationale display
+        state = gr.State([])
+        rationale_display = gr.Markdown("")
+
         def respond_and_maybe_log(inp, h, log_enabled):
-            out_txt, out_hist, decision, rationale = respond(inp, h)
-            # If logging enabled, append a JSON line to logs/decision_log.jsonl
+            out_txt, out_hist, new_state, decision, rationale = respond(inp, h)
+            rationale_text = ""
             if log_enabled:
                 try:
                     import json, os
@@ -109,9 +122,10 @@ def start_ui():
                         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
                 except Exception:
                     pass
-            return out_txt, out_hist
+                rationale_text = f"**Decision:** {decision}  \n**Rationale:** {rationale}"
+            return out_txt, out_hist, new_state, rationale_text
 
-        send.click(respond_and_maybe_log, [txt, chatbot, log_toggle], [txt, chatbot])
+        send.click(respond_and_maybe_log, [txt, state, log_toggle], [txt, chatbot, state, rationale_display])
 
         demo.launch()
 

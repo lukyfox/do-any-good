@@ -10,9 +10,9 @@ spec.loader.exec_module(gr)
 respond = gr.respond
 
 # First interaction: time query
-out_txt, out_hist, decision1, rationale1 = respond("what time is it?", [])
+out_txt, out_hist, state, decision1, rationale1 = respond("what time is it?", [])
 # Second interaction: volunteering query
-out_txt2, out_hist2, decision2, rationale2 = respond("I want volunteering ideas in my town", out_hist)
+out_txt2, out_hist2, state, decision2, rationale2 = respond("I want volunteering ideas in my town", state)
 
 os.makedirs("logs", exist_ok=True)
 logpath = os.path.join("logs","decision_log.jsonl")
