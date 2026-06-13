@@ -1,5 +1,6 @@
 import os
 import time
+import json
 import requests
 import gradio as gr
 
@@ -17,6 +18,55 @@ def call_mcp(question, request_class="goodies_suggester"):
 
 def local_tool_get_time():
     return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _extract_assistant_text(resp):
+    if not isinstance(resp, dict):
+        return str(resp)
+
+    if "response" in resp:
+        return _extract_assistant_text(resp["response"])
+
+    if "text" in resp and isinstance(resp["text"], str):
+        return resp["text"]
+
+    if "raw" in resp and isinstance(resp["raw"], str):
+        return resp["raw"]
+
+    if "suggestions" in resp and isinstance(resp["suggestions"], list):
+        lines = []
+        for item in resp["suggestions"]:
+            if isinstance(item, dict):
+                title = item.get("title") or item.get("text") or ""
+                description = item.get("description")
+                if title and description:
+                    lines.append(f"{title}: {description}")
+                elif title:
+                    lines.append(str(title))
+                elif description:
+                    lines.append(str(description))
+            else:
+                lines.append(str(item))
+        if lines:
+            return "\n\n".join(lines)
+
+    if "parsed" in resp:
+        parsed = resp["parsed"]
+        if isinstance(parsed, str):
+            return parsed
+        if isinstance(parsed, dict) and "text" in parsed and isinstance(parsed["text"], str):
+            return parsed["text"]
+        if isinstance(parsed, dict):
+            return json.dumps(parsed, ensure_ascii=False)
+
+    if "error" in resp:
+        return str(resp["error"])
+
+    for key in ("message", "content", "result"):
+        if key in resp and isinstance(resp[key], str):
+            return resp[key]
+
+    return json.dumps(resp, ensure_ascii=False)
 
 
 def client_agent_decision(user_input, history):
@@ -40,15 +90,7 @@ def client_agent_decision(user_input, history):
             "Do not include any other text.\nUser message: \"" + user_input + "\""
         )
         resp = call_mcp(decision_prompt, request_class="decision")
-        # Extract assistant text
-        assistant_text = None
-        if isinstance(resp, dict):
-            assistant_text = resp.get("response") or resp.get("text") or None
-        if isinstance(assistant_text, dict):
-            # If the MCP returns structured payload, try to find raw text
-            assistant_text = assistant_text.get("text") or assistant_text.get("raw") or assistant_text.get("parsed")
-        if isinstance(assistant_text, list):
-            assistant_text = " ".join(str(x) for x in assistant_text)
+        assistant_text = _extract_assistant_text(resp)
         if assistant_text:
             s = str(assistant_text).lower()
             if "call_mcp" in s or "call mcp" in s or "mcp" in s or "call" in s:
@@ -73,9 +115,7 @@ def respond(user_input, history_state):
     else:
         # When asking MCP for content, the decision agent may have already asked MCP
         resp = call_mcp(user_input)
-        assistant_text = resp.get("response") if isinstance(resp, dict) else str(resp)
-        if isinstance(assistant_text, dict):
-            assistant_text = assistant_text.get("text") or str(assistant_text)
+        assistant_text = _extract_assistant_text(resp)
         rationale = "Routed to MCP for full answer"
     history_state.append({"role": "assistant", "content": assistant_text})
     return "", history_state, history_state, decision, rationale
