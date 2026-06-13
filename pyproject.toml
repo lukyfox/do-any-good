@@ -18,3 +18,6 @@ known-first-party = ["backend", "client"]
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]

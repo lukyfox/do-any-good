@@ -2,6 +2,10 @@
 
 > Status: living document. Source spec is a personal brainstorm (Czech), **not** a final
 > technical specification — details are validated and questioned as we go.
+>
+> **Progress:** M0–M10 complete — the lean text MVP is implemented and tested (ruff clean,
+> full pytest suite green). Deferred items (voice, image, web search, calendar UI, Foundry IQ
+> migration) remain the post-MVP backlog below.
 
 ## What the app is
 

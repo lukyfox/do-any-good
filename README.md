@@ -1,36 +1,85 @@
-# Goodies Suggester — MCP + Gradio MVP
+# Do Any Good (DAG)
 
-This repository contains a minimal MVP for an AI-powered "good deeds" suggester using:
+A safety-aware assistant that helps you do one good deed — a **Goody** — each day. A Goody can
+be something for others or something good you do for yourself (rest, learning, health, a small
+joy). The agent suggests deeds, keeps a profile, tracks what you complete, and can act as a
+thematic diary.
 
-- FastAPI for the MCP server
-- A small LLM client wrapper intended to call Microsoft Foundry Responses API (or return a mock if not configured)
-- Gradio client for chatting, calling tools, and forwarding requests to the MCP endpoint
+> This is the lean text MVP. Voice, image input, web search, a calendar view, and Foundry IQ
+> storage are deferred — see [PLAN.md](PLAN.md).
 
-Quick start (create a virtualenv first):
+## Architecture
+
+```
+Gradio client  --HTTP-->  Backend agent (FastAPI)  -->  Foundry / Azure OpenAI (Responses API)
+                              |  (MCP host/client)
+                              +--MCP-->  MCP tools server  -->  Markdown/JSON file storage
+```
+
+- **Backend agent** (`backend/app/agent`) — runs a safety gate, then a tool-calling loop. It is
+  an MCP *host*: it connects to the tools server in-process and exposes the tools to the model.
+- **MCP tools server** (`backend/app/mcp_server`) — a real MCP server over the storage layer
+  (profile, Goodies, journal). Used in-process by the agent; can also run standalone over stdio.
+- **Storage** (`backend/app/storage`) — profile as Markdown + JSON frontmatter (versioned),
+  Goodies as JSONL, journal as Markdown, under `DAG_DATA_DIR` (default `./data`).
+- **Gradio client** (`client/gradio_app.py`) — chat, suggestions, progress overview, tracking.
+
+## Quick start (Windows / PowerShell)
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-# In one terminal: start the MCP server
+
+# Terminal 1 — backend (agent API)
 python -m uvicorn backend.app.main:app --reload
-# In another terminal: start the client
-python client\gradio_app.py
+
+# Terminal 2 — Gradio client
+python -m client.gradio_app
 ```
 
-Configuration (optional):
+Then open the URL the client prints (default http://127.0.0.1:7860). Without a configured
+Foundry endpoint the backend uses a **mock** LLM, so the UI runs offline for development.
 
-Create a `.env` with the following values (or export env vars):
+## Configuration
 
-- `FOUNDRY_RESPONSES_URL` — full URL to the Foundry Responses endpoint
-- `FOUNDRY_API_KEY` — API key or bearer token for Foundry
-- `FOUNDRY_PROJECT` — Foundry project name or ID (optional)
-- `FOUNDRY_MODEL` — model name for Foundry / Azure OpenAI Responses (optional but recommended for Azure)
-- `MCP_SERVER_URL` — URL of the MCP server (defaults to http://localhost:8000/mcp/process)
+Copy `.env.example` to `.env` and fill in what you have:
 
-Notes:
+| Variable | Purpose |
+|----------|---------|
+| `FOUNDRY_RESPONSES_URL` | Full URL of the Foundry / Azure OpenAI Responses endpoint |
+| `FOUNDRY_API_KEY` | API key / bearer token |
+| `FOUNDRY_MODEL` | Model / deployment name (required for Azure OpenAI) |
+| `FOUNDRY_PROJECT` | Foundry project (optional) |
+| `DAG_DATA_DIR` | Storage directory (default `data`) |
+| `DAG_BACKEND_URL` | Backend base URL the Gradio client calls (default `http://localhost:8000`) |
 
-- The LLM client in `backend/app/llm_client.py` now sends `input`, `requestClass`, and optional `project` to Foundry.
-- If `FOUNDRY_RESPONSES_URL` or `FOUNDRY_API_KEY` are missing, the backend falls back to a mock response for local testing.
-# do-any-good
-AI powered application for personal growth through making good things ;)
+If `FOUNDRY_RESPONSES_URL` or `FOUNDRY_API_KEY` is missing, the backend falls back to the mock.
+
+## HTTP endpoints
+
+| Method & path | Purpose |
+|---------------|---------|
+| `POST /chat` | Converse with the agent (`{message, history}` → `{reply, history}`) |
+| `POST /plan/today` · `POST /plan/week` | Generate + persist suggestions |
+| `GET /goodies` | List Goodies (filters: `status`, `date_from`, `date_to`) |
+| `POST /goodies/{id}/status` | Mark `done`/`missed` with an optional summary |
+| `GET /overview` | Progress summary (counts, self/others, grouped lists) |
+| `POST /journal` · `GET /journal` | Append / read the journal |
+| `GET /health` | Health check |
+
+## Optional: run the MCP tools server standalone
+
+The agent uses the tools server in-process, so this is only needed if an external MCP client
+should reach the tools directly:
+
+```powershell
+python -m backend.app.mcp_server.server   # stdio transport
+```
+
+## Development
+
+```powershell
+pytest          # full test suite (mocked LLM — no live calls)
+ruff check .    # lint
+```
