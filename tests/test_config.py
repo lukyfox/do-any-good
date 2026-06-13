@@ -6,6 +6,7 @@ _ALL_VARS = (
     "FOUNDRY_PROJECT",
     "FOUNDRY_MODEL",
     "MCP_SERVER_URL",
+    "DAG_DATA_DIR",
 )
 
 
@@ -16,6 +17,7 @@ def test_defaults_when_env_absent(monkeypatch):
     settings = get_settings()
     assert settings.foundry_configured is False
     assert settings.mcp_server_url == "http://localhost:8000/mcp/process"
+    assert settings.data_dir == "data"
 
 
 def test_reads_env(monkeypatch):
