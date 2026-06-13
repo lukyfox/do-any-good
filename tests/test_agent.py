@@ -1,7 +1,7 @@
 import anyio
 from fastapi.testclient import TestClient
 
-from backend.app.agent import Agent
+from backend.app.agent import Agent, SafetyDecision, SafetyVerdict
 from backend.app.llm_client import LLMClient, LLMResult, MockLLMClient, ToolCall
 from backend.app.main import app, get_agent_llm, get_storage
 from backend.app.storage import FileStorage
@@ -14,6 +14,11 @@ MCP_TOOL_NAMES = {
     "set_goody_status",
     "append_journal",
 }
+
+
+def _allow(_message: str) -> SafetyVerdict:
+    """No-op safety checker for tests that aren't exercising the gate."""
+    return SafetyVerdict(decision=SafetyDecision.ALLOW)
 
 
 class _RecordingLLM(LLMClient):
@@ -39,7 +44,7 @@ class _AlwaysToolLLM(LLMClient):
 
 
 def test_agent_plain_reply(tmp_path):
-    agent = Agent(FileStorage(tmp_path), MockLLMClient([LLMResult(text="Ahoj!")]))
+    agent = Agent(FileStorage(tmp_path), MockLLMClient([LLMResult(text="Ahoj!")]), safety=_allow)
     res = anyio.run(agent.run, "Hi")
     assert res.reply == "Ahoj!"
     assert res.tools_called == []
@@ -62,7 +67,7 @@ def test_agent_executes_tool_then_replies(tmp_path):
             LLMResult(text="Added it!"),
         ]
     )
-    res = anyio.run(Agent(storage, llm).run, "plan a goody")
+    res = anyio.run(Agent(storage, llm, safety=_allow).run, "plan a goody")
     assert res.reply == "Added it!"
     assert res.tools_called == ["add_goody"]
     assert [g.title for g in storage.list_goodies()] == ["Call gran"]  # tool hit storage
@@ -70,14 +75,14 @@ def test_agent_executes_tool_then_replies(tmp_path):
 
 def test_agent_exposes_mcp_tools(tmp_path):
     llm = _RecordingLLM()
-    anyio.run(Agent(FileStorage(tmp_path), llm).run, "hi")
+    anyio.run(Agent(FileStorage(tmp_path), llm, safety=_allow).run, "hi")
     names = {t["name"] for t in llm.tools_seen}
     assert MCP_TOOL_NAMES <= names
     assert all("parameters" in t for t in llm.tools_seen)
 
 
 def test_agent_stops_at_max_iterations(tmp_path):
-    agent = Agent(FileStorage(tmp_path), _AlwaysToolLLM(), max_iterations=3)
+    agent = Agent(FileStorage(tmp_path), _AlwaysToolLLM(), max_iterations=3, safety=_allow)
     res = anyio.run(agent.run, "loop forever")
     assert len(res.tools_called) == 3
     assert res.reply
@@ -85,7 +90,12 @@ def test_agent_stops_at_max_iterations(tmp_path):
 
 def test_chat_endpoint(tmp_path):
     app.dependency_overrides[get_storage] = lambda: FileStorage(tmp_path)
-    app.dependency_overrides[get_agent_llm] = lambda: MockLLMClient([LLMResult(text="Ahoj!")])
+    app.dependency_overrides[get_agent_llm] = lambda: MockLLMClient(
+        [
+            LLMResult(parsed={"decision": "allow", "reason": "", "resources": []}),
+            LLMResult(text="Ahoj!"),
+        ]
+    )
     try:
         r = TestClient(app).post("/chat", json={"message": "Hi"})
         assert r.status_code == 200

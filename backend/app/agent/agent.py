@@ -1,13 +1,15 @@
 """The Do Any Good agent: an MCP host that runs the LLM tool-calling loop.
 
-The agent connects to the in-process MCP tools server, exposes its tools to the
-LLM, and loops (model -> tool calls -> model) until the model returns a final
-answer. Persistent state lives in storage; only the conversation turns are kept
-in the returned history.
+The agent first runs a safety gate (see safety.py). If the request is refused,
+it returns a compassionate message with help resources without planning a deed.
+Otherwise it connects to the in-process MCP tools server, exposes the tools to
+the LLM, and loops (model -> tool calls -> model) until a final answer.
+Persistent state lives in storage; only conversation turns are kept in history.
 """
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,6 +19,7 @@ from ..llm_client import LLMClient
 from ..mcp_server import build_mcp
 from ..storage import FileStorage
 from .prompts import SYSTEM_PROMPT
+from .safety import LLMSafetyChecker, SafetyDecision, SafetyVerdict, refusal_message
 
 MAX_ITERATIONS = 6
 
@@ -28,6 +31,7 @@ class AgentResult:
     reply: str
     history: list[dict[str, Any]] = field(default_factory=list)
     tools_called: list[str] = field(default_factory=list)
+    safety: SafetyDecision = SafetyDecision.ALLOW
 
 
 def _tool_result_text(result) -> str:
@@ -39,7 +43,7 @@ def _tool_result_text(result) -> str:
 
 
 class Agent:
-    """Runs one conversational turn, using MCP tools as needed."""
+    """Runs one conversational turn, with a safety gate and MCP tools."""
 
     def __init__(
         self,
@@ -47,11 +51,30 @@ class Agent:
         llm: LLMClient,
         system_prompt: str = SYSTEM_PROMPT,
         max_iterations: int = MAX_ITERATIONS,
+        safety: Callable[[str], SafetyVerdict] | None = None,
     ) -> None:
         self.storage = storage
         self.llm = llm
         self.system_prompt = system_prompt
         self.max_iterations = max_iterations
+        self.safety = safety if safety is not None else LLMSafetyChecker(llm)
+
+    def _turn(
+        self,
+        history: list[dict[str, Any]],
+        user_message: str,
+        reply: str,
+        tools_called: list[str],
+        decision: SafetyDecision,
+    ) -> AgentResult:
+        new_history = [
+            *history,
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": reply},
+        ]
+        return AgentResult(
+            reply=reply, history=new_history, tools_called=tools_called, safety=decision
+        )
 
     async def _mcp_tools(self, session) -> list[dict[str, Any]]:
         listed = await session.list_tools()
@@ -64,14 +87,22 @@ class Agent:
         self, user_message: str, history: list[dict[str, Any]] | None = None
     ) -> AgentResult:
         history = history or []
-        working: list[dict[str, Any]] = [
-            {"role": "system", "content": self.system_prompt},
-            *history,
-            {"role": "user", "content": user_message},
-        ]
+        verdict = self.safety(user_message)
+        if verdict.decision == SafetyDecision.REFUSE:
+            return self._turn(
+                history, user_message, refusal_message(verdict), [], verdict.decision
+            )
+
+        working: list[dict[str, Any]] = [{"role": "system", "content": self.system_prompt}]
+        if verdict.decision == SafetyDecision.WARN and verdict.reason:
+            working.append(
+                {"role": "system", "content": f"Safety note for this request: {verdict.reason}"}
+            )
+        working.extend(history)
+        working.append({"role": "user", "content": user_message})
+
         tools_called: list[str] = []
         reply = ""
-
         async with connected(build_mcp(self.storage)) as session:
             tools = await self._mcp_tools(session)
             for _ in range(self.max_iterations):
@@ -100,9 +131,4 @@ class Agent:
             else:
                 reply = "I couldn't complete that in time — could you rephrase?"
 
-        new_history = [
-            *history,
-            {"role": "user", "content": user_message},
-            {"role": "assistant", "content": reply},
-        ]
-        return AgentResult(reply=reply, history=new_history, tools_called=tools_called)
+        return self._turn(history, user_message, reply, tools_called, verdict.decision)
