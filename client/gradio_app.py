@@ -78,17 +78,7 @@ def respond(user_input, history_state):
             assistant_text = assistant_text.get("text") or str(assistant_text)
         rationale = "Routed to MCP for full answer"
     history_state.append({"role": "assistant", "content": assistant_text})
-
-    display_history = []
-    last_user = None
-    for msg in history_state:
-        if msg.get("role") == "user":
-            last_user = msg.get("content")
-        elif msg.get("role") == "assistant" and last_user is not None:
-            display_history.append((last_user, msg.get("content")))
-            last_user = None
-
-    return "", display_history, history_state, decision, rationale
+    return "", history_state, history_state, decision, rationale
 
 
 def start_ui():
