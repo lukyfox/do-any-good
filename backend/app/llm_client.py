@@ -1,25 +1,40 @@
-"""Thin client for the Microsoft Foundry / Azure OpenAI Responses API.
+"""LLM client for the Microsoft Foundry / Azure OpenAI Responses API.
 
-M0 baseline: perform the HTTP call (or return a mock when unconfigured) and
-return the parsed JSON response as-is. Native structured output and tool-calling
-are added in M3 — there is intentionally no text-scraping here.
+Exposes a thin, normalized interface (LLMClient.complete -> LLMResult) carrying
+assistant text, tool calls, and parsed structured output. The real client
+targets the Responses API (/responses) with native function tools and
+json_schema structured output; MockLLMClient is used offline and in tests.
 """
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass, field
 from typing import Any
 
 import requests
 
 from .config import Settings, get_settings
 
-REQUEST_TIMEOUT_SECONDS = 15
+REQUEST_TIMEOUT_SECONDS = 30
 
 
-def _normalize_url(url: str) -> str:
-    url = url.rstrip("/")
-    if "openai.azure.com" in url and not url.endswith("/responses"):
-        return url + "/responses"
-    return url
+@dataclass
+class ToolCall:
+    """A function/tool call requested by the model."""
+
+    call_id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass
+class LLMResult:
+    """Normalized result of an LLM completion."""
+
+    text: str | None = None
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    parsed: dict[str, Any] | None = None
+    raw: dict[str, Any] | None = None
 
 
 def _headers(settings: Settings) -> dict[str, str]:
@@ -31,70 +46,156 @@ def _headers(settings: Settings) -> dict[str, str]:
     }
 
 
-def _mock_response(question: str, request_class: str) -> dict[str, Any]:
+def _to_responses_tool(tool: dict[str, Any]) -> dict[str, Any]:
+    """Map a {name, description, parameters} tool to the Responses API shape."""
     return {
-        "text": f"Mocked Foundry response for '{question}' (class={request_class}).",
-        "suggestions": [
-            {"title": "Help a neighbor", "category": "others"},
-            {"title": "Take a mindful walk", "category": "self"},
-        ],
+        "type": "function",
+        "name": tool["name"],
+        "description": tool.get("description", ""),
+        "parameters": tool.get("parameters", {"type": "object", "properties": {}}),
     }
 
 
-def _build_payload(question: str, request_class: str, settings: Settings) -> dict[str, Any]:
-    if settings.is_azure_openai:
-        system_prompt = (
-            f"Request class: {request_class}. Suggest helpful, safe good deeds for the user."
-        )
-        payload: dict[str, Any] = {
-            "input": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": question},
-            ],
+def build_responses_payload(
+    messages: list[dict[str, Any]],
+    *,
+    model: str | None,
+    tools: list[dict[str, Any]] | None = None,
+    response_schema: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a Responses API request body."""
+    payload: dict[str, Any] = {"input": messages}
+    if model:
+        payload["model"] = model
+    if tools:
+        payload["tools"] = [_to_responses_tool(t) for t in tools]
+    if response_schema:
+        payload["text"] = {
+            "format": {
+                "type": "json_schema",
+                "name": response_schema.get("name", "result"),
+                "schema": response_schema["schema"],
+                "strict": response_schema.get("strict", True),
+            }
         }
-        if settings.foundry_model:
-            payload["model"] = settings.foundry_model
-        return payload
-
-    payload = {"input": question, "requestClass": request_class}
-    if settings.foundry_model:
-        payload["model"] = settings.foundry_model
-    if settings.foundry_project:
-        payload["project"] = settings.foundry_project
     return payload
 
 
-def call_foundry_responses(question: str, request_class: str) -> dict[str, Any]:
-    """Call the Foundry/Azure Responses API, or return a mock when not configured."""
-    settings = get_settings()
-    if not settings.foundry_configured:
-        return _mock_response(question, request_class)
-    if settings.is_azure_openai and not settings.foundry_model:
-        return {"error": "FOUNDRY_MODEL is required for Azure OpenAI Responses endpoints."}
-
-    url = _normalize_url(settings.foundry_responses_url or "")
+def _try_parse_json(text: str) -> dict[str, Any] | None:
     try:
+        value = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def parse_responses(payload: dict[str, Any]) -> LLMResult:
+    """Parse a Responses API response body into a normalized LLMResult."""
+    result = LLMResult(raw=payload)
+    texts: list[str] = []
+    for item in payload.get("output", []):
+        item_type = item.get("type")
+        if item_type == "function_call":
+            raw_args = item.get("arguments")
+            if isinstance(raw_args, str):
+                try:
+                    arguments = json.loads(raw_args)
+                except json.JSONDecodeError:
+                    arguments = {}
+            else:
+                arguments = raw_args or {}
+            result.tool_calls.append(
+                ToolCall(
+                    call_id=item.get("call_id") or item.get("id", ""),
+                    name=item.get("name", ""),
+                    arguments=arguments,
+                )
+            )
+        elif item_type == "message":
+            for part in item.get("content", []):
+                if part.get("type") in ("output_text", "text"):
+                    texts.append(part.get("text", ""))
+    if not texts and isinstance(payload.get("output_text"), str):
+        texts.append(payload["output_text"])
+    result.text = "\n".join(t for t in texts if t) or None
+    if result.text:
+        result.parsed = _try_parse_json(result.text)
+    return result
+
+
+class LLMClient:
+    """Interface for completion backends."""
+
+    def complete(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        response_schema: dict[str, Any] | None = None,
+    ) -> LLMResult:
+        raise NotImplementedError
+
+
+class MockLLMClient(LLMClient):
+    """Deterministic client for offline/dev and tests.
+
+    Returns queued results in order if provided; otherwise echoes the last
+    user message as text."""
+
+    def __init__(self, scripted: list[LLMResult] | None = None) -> None:
+        self._scripted = list(scripted or [])
+
+    def complete(self, messages, *, tools=None, response_schema=None) -> LLMResult:
+        if self._scripted:
+            return self._scripted.pop(0)
+        last_user = next(
+            (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
+            "",
+        )
+        return LLMResult(text=f"[mock] {last_user}")
+
+
+class FoundryResponsesClient(LLMClient):
+    """Calls the Azure/Foundry Responses API."""
+
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings or get_settings()
+
+    def complete(self, messages, *, tools=None, response_schema=None) -> LLMResult:
+        s = self._settings
+        payload = build_responses_payload(
+            messages, model=s.foundry_model, tools=tools, response_schema=response_schema
+        )
+        url = (s.foundry_responses_url or "").rstrip("/")
         response = requests.post(
-            url,
-            json=_build_payload(question, request_class, settings),
-            headers=_headers(settings),
-            timeout=REQUEST_TIMEOUT_SECONDS,
+            url, json=payload, headers=_headers(s), timeout=REQUEST_TIMEOUT_SECONDS
         )
         response.raise_for_status()
-        return response.json()
-    except requests.exceptions.HTTPError as err:
-        try:
-            body: Any = response.json()
-        except Exception:
-            body = response.text
-        return {"error": str(err), "body": body, "url": url}
-    except requests.exceptions.RequestException as err:
-        return {"error": str(err), "url": url}
+        return parse_responses(response.json())
+
+
+def get_llm_client() -> LLMClient:
+    """Return a real client when Foundry is configured, else a mock."""
+    settings = get_settings()
+    if settings.foundry_configured:
+        return FoundryResponsesClient(settings)
+    return MockLLMClient()
 
 
 def get_structured_response(question: str, request_class: str) -> dict[str, Any]:
-    """Return the raw Foundry/mock response in a stable envelope.
+    """Backward-compatible helper for the interim /mcp/process endpoint.
 
-    M3 replaces this with structured-output + tool-calling parsing.
+    Superseded by the agent in M4.
     """
-    return {"response": call_foundry_responses(question, request_class)}
+    messages = [
+        {
+            "role": "system",
+            "content": f"Request class: {request_class}. Suggest safe, helpful good deeds.",
+        },
+        {"role": "user", "content": question},
+    ]
+    try:
+        result = get_llm_client().complete(messages)
+    except Exception as err:  # interim endpoint: surface errors gracefully
+        return {"error": str(err)}
+    return {"response": {"text": result.text, "parsed": result.parsed}}

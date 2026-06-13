@@ -1,71 +1,169 @@
-import requests
-
 from backend.app import llm_client
 from backend.app.config import Settings
+from backend.app.llm_client import (
+    FoundryResponsesClient,
+    LLMClient,
+    LLMResult,
+    MockLLMClient,
+    ToolCall,
+    build_responses_payload,
+    get_structured_response,
+    parse_responses,
+)
+
+MSG_RESPONSE = {
+    "output": [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Hello there"}],
+        }
+    ]
+}
+FUNC_RESPONSE = {
+    "output": [
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "get_profile",
+            "arguments": '{"x": 1}',
+        }
+    ]
+}
+JSON_RESPONSE = {
+    "output": [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": '{"suggestions": ["a"]}'}],
+        }
+    ]
+}
+OT_RESPONSE = {"output": [], "output_text": "Quick text"}
 
 
-def test_mock_response_when_unconfigured(monkeypatch):
+def test_build_payload_minimal():
+    p = build_responses_payload([{"role": "user", "content": "hi"}], model="m")
+    assert p["input"] == [{"role": "user", "content": "hi"}]
+    assert p["model"] == "m"
+    assert "tools" not in p and "text" not in p
+
+
+def test_build_payload_tools_and_schema():
+    tools = [{"name": "t", "description": "d", "parameters": {"type": "object"}}]
+    schema = {"name": "out", "schema": {"type": "object"}}
+    p = build_responses_payload(
+        [{"role": "user", "content": "hi"}], model=None, tools=tools, response_schema=schema
+    )
+    assert "model" not in p
+    assert p["tools"][0] == {
+        "type": "function",
+        "name": "t",
+        "description": "d",
+        "parameters": {"type": "object"},
+    }
+    assert p["text"]["format"]["type"] == "json_schema"
+    assert p["text"]["format"]["schema"] == {"type": "object"}
+    assert p["text"]["format"]["strict"] is True
+
+
+def test_parse_message_text():
+    r = parse_responses(MSG_RESPONSE)
+    assert r.text == "Hello there"
+    assert r.parsed is None
+    assert r.tool_calls == []
+
+
+def test_parse_function_call():
+    r = parse_responses(FUNC_RESPONSE)
+    assert r.text is None
+    assert len(r.tool_calls) == 1
+    tc = r.tool_calls[0]
+    assert (tc.call_id, tc.name, tc.arguments) == ("call_1", "get_profile", {"x": 1})
+
+
+def test_parse_structured_json():
+    assert parse_responses(JSON_RESPONSE).parsed == {"suggestions": ["a"]}
+
+
+def test_parse_output_text_convenience():
+    assert parse_responses(OT_RESPONSE).text == "Quick text"
+
+
+def test_mock_default_echo():
+    r = MockLLMClient().complete([{"role": "user", "content": "hello"}])
+    assert "hello" in r.text
+
+
+def test_mock_scripted_order():
+    client = MockLLMClient(
+        [LLMResult(text="first"), LLMResult(tool_calls=[ToolCall("c", "n", {})])]
+    )
+    assert client.complete([]).text == "first"
+    assert client.complete([]).tool_calls[0].name == "n"
+
+
+def test_get_llm_client_selects_impl(monkeypatch):
     monkeypatch.setattr(llm_client, "get_settings", lambda: Settings())
-    out = llm_client.get_structured_response("hi", "decision")
-    assert "response" in out
-    assert out["response"]["text"].startswith("Mocked Foundry response")
-    assert isinstance(out["response"]["suggestions"], list)
-
-
-def test_azure_payload_shape():
-    settings = Settings(
-        foundry_responses_url="https://x.openai.azure.com/responses",
-        foundry_api_key="k",
-        foundry_model="gpt-4o",
+    assert isinstance(llm_client.get_llm_client(), MockLLMClient)
+    cfg = Settings(
+        foundry_responses_url="https://x.openai.azure.com/responses", foundry_api_key="k"
     )
-    payload = llm_client._build_payload("do good", "goodies_suggester", settings)
-    assert payload["model"] == "gpt-4o"
-    assert payload["input"][0]["role"] == "system"
-    assert payload["input"][1]["content"] == "do good"
-
-
-def test_non_azure_payload_shape():
-    settings = Settings(
-        foundry_responses_url="https://foundry.example.com/responses",
-        foundry_api_key="k",
-        foundry_project="proj",
-    )
-    payload = llm_client._build_payload("do good", "goodies_suggester", settings)
-    assert payload["input"] == "do good"
-    assert payload["requestClass"] == "goodies_suggester"
-    assert payload["project"] == "proj"
+    monkeypatch.setattr(llm_client, "get_settings", lambda: cfg)
+    assert isinstance(llm_client.get_llm_client(), FoundryResponsesClient)
 
 
 def test_headers_azure_vs_bearer():
     azure = Settings(
-        foundry_responses_url="https://x.openai.azure.com/responses",
-        foundry_api_key="k",
+        foundry_responses_url="https://x.openai.azure.com/responses", foundry_api_key="k"
     )
     other = Settings(
-        foundry_responses_url="https://foundry.example.com/responses",
-        foundry_api_key="k",
+        foundry_responses_url="https://foundry.example.com/responses", foundry_api_key="k"
     )
     assert llm_client._headers(azure)["api-key"] == "k"
     assert llm_client._headers(other)["Authorization"] == "Bearer k"
 
 
-def test_call_foundry_http_error(monkeypatch):
-    settings = Settings(
-        foundry_responses_url="https://foundry.example.com/responses",
+def test_foundry_complete_posts_and_parses(monkeypatch):
+    cfg = Settings(
+        foundry_responses_url="https://x.openai.azure.com/responses/",
         foundry_api_key="k",
+        foundry_model="dep",
     )
-    monkeypatch.setattr(llm_client, "get_settings", lambda: settings)
+    captured = {}
 
     class _Resp:
-        text = "bad"
-
         def raise_for_status(self):
-            raise requests.exceptions.HTTPError("boom")
+            pass
 
         def json(self):
-            return {"detail": "bad"}
+            return MSG_RESPONSE
 
-    monkeypatch.setattr(llm_client.requests, "post", lambda *a, **k: _Resp())
-    out = llm_client.call_foundry_responses("q", "c")
-    assert "error" in out
-    assert out["body"] == {"detail": "bad"}
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured.update(url=url, json=json, headers=headers)
+        return _Resp()
+
+    monkeypatch.setattr(llm_client.requests, "post", fake_post)
+    result = FoundryResponsesClient(cfg).complete(
+        [{"role": "user", "content": "hi"}], tools=[{"name": "t"}]
+    )
+    assert result.text == "Hello there"
+    assert captured["url"] == "https://x.openai.azure.com/responses"  # trailing slash trimmed
+    assert captured["json"]["model"] == "dep"
+    assert captured["headers"]["api-key"] == "k"
+    assert captured["json"]["tools"][0]["name"] == "t"
+
+
+def test_get_structured_response_mock_envelope(monkeypatch):
+    monkeypatch.setattr(llm_client, "get_settings", lambda: Settings())
+    out = get_structured_response("do good", "decision")
+    assert "do good" in out["response"]["text"]
+
+
+def test_get_structured_response_error(monkeypatch):
+    class Boom(LLMClient):
+        def complete(self, *a, **k):
+            raise RuntimeError("nope")
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: Boom())
+    assert get_structured_response("q", "c")["error"] == "nope"
