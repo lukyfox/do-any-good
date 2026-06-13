@@ -19,16 +19,60 @@ def local_tool_get_time():
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def respond(user_input, history, to_mcp=False):
+def client_agent_decision(user_input, history):
+    """Use a small AI-based decision agent to choose routing.
+
+    The agent will try a lightweight local heuristic first. If uncertain,
+    it will ask MCP for a short decision and interpret the answer.
+    Returns: "tool" or "mcp"
+    """
+    normalized = user_input.strip().lower()
+    tool_triggers = ["time", "current time", "what time", "date", "clock"]
+    if any(trigger in normalized for trigger in tool_triggers):
+        return "tool"
+
+    # Ask MCP for a decision as a fallback (stateless call). The MCP model
+    # should return a short instruction like 'CALL_MCP' or 'TOOL'.
+    try:
+        decision_prompt = (
+            "You are a routing assistant. Given the user's message, reply with ONE token: "
+            "CALL_MCP if this should be handled by the core MCP service, or TOOL if it can be handled locally. "
+            "Do not include any other text.\nUser message: \"" + user_input + "\""
+        )
+        resp = call_mcp(decision_prompt, request_class="decision")
+        # Extract assistant text
+        assistant_text = None
+        if isinstance(resp, dict):
+            assistant_text = resp.get("response") or resp.get("text") or None
+        if isinstance(assistant_text, dict):
+            # If the MCP returns structured payload, try to find raw text
+            assistant_text = assistant_text.get("text") or assistant_text.get("raw") or assistant_text.get("parsed")
+        if isinstance(assistant_text, list):
+            assistant_text = " ".join(str(x) for x in assistant_text)
+        if assistant_text:
+            s = str(assistant_text).lower()
+            if "call_mcp" in s or "call mcp" in s or "mcp" in s or "call" in s:
+                return "mcp"
+            if "tool" in s or "time" in s:
+                return "tool"
+    except Exception:
+        pass
+
+    # Default to MCP when unsure
+    return "mcp"
+
+
+def respond(user_input, history):
     history = history or []
     history.append({"role": "user", "content": user_input})
-    if to_mcp:
+    decision = client_agent_decision(user_input, history)
+    if decision == "tool":
+        assistant_text = local_tool_get_time()
+    else:
         resp = call_mcp(user_input)
         assistant_text = resp.get("response") if isinstance(resp, dict) else str(resp)
         if isinstance(assistant_text, dict):
             assistant_text = assistant_text.get("text") or str(assistant_text)
-    else:
-        assistant_text = "I can forward this to MCP or run a local tool. Click 'Send to MCP' to ask the model."
     history.append({"role": "assistant", "content": assistant_text})
     return "", history
 
@@ -40,18 +84,8 @@ def start_ui():
         txt = gr.Textbox(show_label=False, placeholder="Type your message and press Send")
         with gr.Row():
             send = gr.Button("Send")
-            send_mcp = gr.Button("Send to MCP")
-            tool_btn = gr.Button("Get time (tool)")
 
-        send.click(lambda inp, h: respond(inp, h, to_mcp=False), [txt, chatbot], [txt, chatbot])
-        send_mcp.click(lambda inp, h: respond(inp, h, to_mcp=True), [txt, chatbot], [txt, chatbot])
-
-        def run_tool(h):
-            h = h or []
-            h.append({"role": "assistant", "content": local_tool_get_time()})
-            return "", h
-
-        tool_btn.click(run_tool, [chatbot], [txt, chatbot])
+        send.click(respond, [txt, chatbot], [txt, chatbot])
 
         demo.launch()
 
