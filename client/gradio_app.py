@@ -66,15 +66,19 @@ def respond(user_input, history):
     history = history or []
     history.append({"role": "user", "content": user_input})
     decision = client_agent_decision(user_input, history)
+    rationale = None
     if decision == "tool":
         assistant_text = local_tool_get_time()
+        rationale = "Matched local tool trigger"
     else:
+        # When asking MCP for content, the decision agent may have already asked MCP
         resp = call_mcp(user_input)
         assistant_text = resp.get("response") if isinstance(resp, dict) else str(resp)
         if isinstance(assistant_text, dict):
             assistant_text = assistant_text.get("text") or str(assistant_text)
+        rationale = "Routed to MCP for full answer"
     history.append({"role": "assistant", "content": assistant_text})
-    return "", history
+    return "", history, decision, rationale
 
 
 def start_ui():
@@ -84,8 +88,30 @@ def start_ui():
         txt = gr.Textbox(show_label=False, placeholder="Type your message and press Send")
         with gr.Row():
             send = gr.Button("Send")
+            log_toggle = gr.Checkbox(label="Enable decision logging", value=False)
 
-        send.click(respond, [txt, chatbot], [txt, chatbot])
+        # wrap respond to include logging
+        def respond_and_maybe_log(inp, h, log_enabled):
+            out_txt, out_hist, decision, rationale = respond(inp, h)
+            # If logging enabled, append a JSON line to logs/decision_log.jsonl
+            if log_enabled:
+                try:
+                    import json, os
+                    from datetime import datetime
+                    os.makedirs("logs", exist_ok=True)
+                    entry = {
+                        "ts": datetime.utcnow().isoformat() + "Z",
+                        "user_input": inp,
+                        "decision": decision,
+                        "rationale": rationale,
+                    }
+                    with open(os.path.join("logs", "decision_log.jsonl"), "a", encoding="utf-8") as f:
+                        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+            return out_txt, out_hist
+
+        send.click(respond_and_maybe_log, [txt, chatbot, log_toggle], [txt, chatbot])
 
         demo.launch()
 
