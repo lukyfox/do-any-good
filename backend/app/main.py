@@ -3,15 +3,17 @@
 Exposes the agent at /chat (M4). The legacy /mcp/process endpoint remains as a
 thin interim shim until the client is rebuilt in M9.
 """
+from datetime import date
 from typing import Annotated
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from .agent import Agent
 from .config import get_settings
 from .llm_client import LLMClient, get_llm_client, get_structured_response
-from .storage import FileStorage
+from .overview import build_overview
+from .storage import FileStorage, GoodyNotFoundError, GoodyStatus, JournalEntry
 
 app = FastAPI(title="Do Any Good backend")
 
@@ -24,6 +26,17 @@ class ChatRequest(BaseModel):
 class ProcessRequest(BaseModel):
     question: str
     request_class: str
+
+
+class StatusUpdate(BaseModel):
+    status: GoodyStatus
+    summary: str | None = None
+
+
+class JournalAppend(BaseModel):
+    text: str
+    title: str | None = None
+    goody_id: str | None = None
 
 
 def get_storage() -> FileStorage:
@@ -65,6 +78,51 @@ async def plan_week(
 ) -> dict:
     goodies = Agent(storage, llm).suggest_week()
     return {"goodies": [g.model_dump(mode="json") for g in goodies]}
+
+
+@app.get("/goodies")
+async def get_goodies(
+    storage: Annotated[FileStorage, Depends(get_storage)],
+    status: GoodyStatus | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict:
+    goodies = storage.list_goodies(status=status, date_from=date_from, date_to=date_to)
+    return {"goodies": [g.model_dump(mode="json") for g in goodies]}
+
+
+@app.post("/goodies/{goody_id}/status")
+async def update_goody_status(
+    goody_id: str,
+    body: StatusUpdate,
+    storage: Annotated[FileStorage, Depends(get_storage)],
+) -> dict:
+    try:
+        goody = storage.set_goody_status(goody_id, body.status, body.summary)
+    except GoodyNotFoundError as err:
+        raise HTTPException(status_code=404, detail="Goody not found") from err
+    return goody.model_dump(mode="json")
+
+
+@app.get("/overview")
+async def get_overview(storage: Annotated[FileStorage, Depends(get_storage)]) -> dict:
+    return build_overview(storage)
+
+
+@app.post("/journal")
+async def add_journal(
+    body: JournalAppend,
+    storage: Annotated[FileStorage, Depends(get_storage)],
+) -> dict:
+    entry = storage.append_journal(
+        JournalEntry(text=body.text, title=body.title, goody_id=body.goody_id)
+    )
+    return entry.model_dump(mode="json")
+
+
+@app.get("/journal")
+async def get_journal(storage: Annotated[FileStorage, Depends(get_storage)]) -> dict:
+    return {"markdown": storage.read_journal()}
 
 
 @app.post("/mcp/process")
