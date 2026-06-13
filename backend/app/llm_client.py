@@ -107,6 +107,36 @@ def _try_extract_json(text: str) -> Optional[Any]:
     m = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
     if not m:
         return None
+
+
+    def _parse_suggestion_text(text: str) -> Dict[str, Any]:
+        """Heuristic parser to extract structured fields from suggestion text."""
+        out: Dict[str, Any] = {"title": None, "description": None, "why": None, "how": None, "bonus": None, "text": text}
+        # Normalize separators
+        t = text.replace('\r\n', '\n')
+        # Try to find a title line like '**Good Deed:**' or a first bold heading
+        title_m = re.search(r"\*\*(.*?)\*\*", t)
+        if title_m:
+            out["title"] = title_m.group(1).strip()
+
+        # Split by common section headings
+        sections = re.split(r"\n-{3,}\n|\n\*\*|\n\n", t)
+        # Look for keywords
+        for sec in sections:
+            s = sec.strip()
+            if not s:
+                continue
+            low = s.lower()
+            if "why" in low and not out["why"]:
+                out["why"] = s
+            elif "how to" in low and not out["how"]:
+                out["how"] = s
+            elif "bonus" in low and not out["bonus"]:
+                out["bonus"] = s
+            elif ("good deed" in low or "good deed:" in low or out["description"] is None) and out["description"] is None:
+                out["description"] = s
+
+        return out
     candidate = m.group(1)
     # Try to balance braces if truncated
     try:
