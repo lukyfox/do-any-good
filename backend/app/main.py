@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from .llm_client import call_foundry_responses
+from .llm_client import get_structured_response
 
 app = FastAPI(title="MCP FastAPI Server")
 
@@ -13,5 +13,5 @@ class MCPRequest(BaseModel):
 @app.post("/mcp/process")
 async def process(req: MCPRequest):
     """Receive a question and request class, forward to LLM, return response."""
-    resp = call_foundry_responses(req.question, req.request_class)
+    resp = get_structured_response(req.question, req.request_class)
     return {"response": resp}

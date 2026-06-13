@@ -137,6 +137,78 @@ def _try_extract_json(text: str) -> Optional[Any]:
                 out["description"] = s
 
         return out
+
+
+    def get_structured_response(question: str, request_class: str) -> Dict[str, Any]:
+        """Call the LLM and return a structured dict with suggestions.
+
+        Returns: { original: <raw response or payload>, parsed: <parsed JSON if any>, suggestions: [ {title, description, why, how, bonus, text} ] }
+        """
+        resp = call_foundry_responses(question, request_class)
+        result: Dict[str, Any] = {"original": resp, "parsed": None, "suggestions": []}
+
+        # If the resp already contains parsed info (from _extract_response)
+        parsed = None
+        raw_text = None
+        if isinstance(resp, dict):
+            if "parsed" in resp:
+                parsed = resp.get("parsed")
+            if "raw" in resp:
+                raw_text = resp.get("raw")
+            # Azure-style direct payload
+            if not raw_text and "content" in resp and isinstance(resp["content"], list):
+                texts = []
+                for item in resp["content"]:
+                    if isinstance(item, dict) and item.get("type") == "output_text":
+                        texts.append(item.get("text", ""))
+                raw_text = "\n".join(texts) if texts else raw_text
+        elif isinstance(resp, str):
+            raw_text = resp
+
+        result["parsed"] = parsed
+
+        # If parsed contains suggestions list, use them
+        if isinstance(parsed, dict):
+            # common keys
+            for key in ("suggestions", "items", "results"):
+                if key in parsed and isinstance(parsed[key], list):
+                    for item in parsed[key]:
+                        if isinstance(item, str):
+                            result["suggestions"].append(_parse_suggestion_text(item))
+                        elif isinstance(item, dict):
+                            # normalize minimal fields
+                            text = item.get("text") or item.get("title") or json.dumps(item)
+                            parsed_item = _parse_suggestion_text(str(text))
+                            # merge original dict
+                            parsed_item.update({k: v for k, v in item.items() if k not in parsed_item})
+                            result["suggestions"].append(parsed_item)
+                    return result
+
+        # If we have raw_text, try to split multiple suggestions by bullets or numbered lists
+        if raw_text:
+            items = re.findall(r"(?m)^(?:\d+\.|-|•)\s*(.+)$", raw_text)
+            if items:
+                for it in items:
+                    result["suggestions"].append(_parse_suggestion_text(it.strip()))
+                return result
+
+            # Otherwise split by double newlines and treat each paragraph as a suggestion candidate
+            parts = [p.strip() for p in re.split(r"\n\s*\n", raw_text) if p.strip()]
+            # Remove header if it looks like a title
+            if parts and len(parts[0]) < 120 and (parts[0].lower().startswith("good deed") or "suggestion" in parts[0].lower()):
+                parts = parts[1:]
+            for p in parts:
+                # Skip very short boilerplate
+                if len(p) < 20:
+                    continue
+                result["suggestions"].append(_parse_suggestion_text(p))
+            if result["suggestions"]:
+                return result
+
+        # Fallback: no parsing possible, return raw as single suggestion
+        if raw_text:
+            result["suggestions"].append({"text": raw_text})
+        return result
     candidate = m.group(1)
     # Try to balance braces if truncated
     try:
