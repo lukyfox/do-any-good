@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from typing import Any, Dict, Optional
 import json
 import re
+import ast
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
@@ -42,7 +43,19 @@ def _mock_response(question: str, request_class: str) -> Dict[str, Any]:
 def _extract_response(payload: Dict[str, Any]) -> Any:
     # Handle native Foundry shape
     if "response" in payload:
-        return payload["response"]
+        val = payload["response"]
+        # If the response is a string containing JSON or a Python dict, attempt to parse it
+        if isinstance(val, str):
+            try:
+                parsed_val = json.loads(val)
+                return _extract_response(parsed_val) if isinstance(parsed_val, dict) else parsed_val
+            except Exception:
+                try:
+                    parsed_val = ast.literal_eval(val)
+                    return _extract_response(parsed_val) if isinstance(parsed_val, dict) else parsed_val
+                except Exception:
+                    return val
+        return val
 
     # Azure/OpenAI Responses shape: { 'id', 'type', 'status', 'content': [ {type:'output_text', 'text': '...'} ] }
     if isinstance(payload, dict) and "content" in payload and isinstance(payload["content"], list):
