@@ -1,6 +1,11 @@
 import os
+from pathlib import Path
+
 import requests
+from dotenv import load_dotenv
 from typing import Any, Dict, Optional
+
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
 FOUNDARY_URL = os.getenv("FOUNDRY_RESPONSES_URL")
 API_KEY = os.getenv("FOUNDRY_API_KEY")
