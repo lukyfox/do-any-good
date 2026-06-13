@@ -21,7 +21,7 @@ def local_tool_get_time():
 
 def respond(user_input, history, to_mcp=False):
     history = history or []
-    history.append(("User", user_input))
+    history.append({"role": "user", "content": user_input})
     if to_mcp:
         resp = call_mcp(user_input)
         assistant_text = resp.get("response") if isinstance(resp, dict) else str(resp)
@@ -29,7 +29,7 @@ def respond(user_input, history, to_mcp=False):
             assistant_text = assistant_text.get("text") or str(assistant_text)
     else:
         assistant_text = "I can forward this to MCP or run a local tool. Click 'Send to MCP' to ask the model."
-    history.append(("Assistant", assistant_text))
+    history.append({"role": "assistant", "content": assistant_text})
     return "", history
 
 
@@ -45,10 +45,12 @@ def start_ui():
 
         send.click(lambda inp, h: respond(inp, h, to_mcp=False), [txt, chatbot], [txt, chatbot])
         send_mcp.click(lambda inp, h: respond(inp, h, to_mcp=True), [txt, chatbot], [txt, chatbot])
+
         def run_tool(h):
             h = h or []
-            h.append(("Tool", local_tool_get_time()))
+            h.append({"role": "assistant", "content": local_tool_get_time()})
             return "", h
+
         tool_btn.click(run_tool, [chatbot], [txt, chatbot])
 
         demo.launch()

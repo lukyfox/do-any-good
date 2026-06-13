@@ -25,6 +25,7 @@ Create a `.env` with the following values (or export env vars):
 - `FOUNDRY_RESPONSES_URL` — full URL to the Foundry Responses endpoint
 - `FOUNDRY_API_KEY` — API key or bearer token for Foundry
 - `FOUNDRY_PROJECT` — Foundry project name or ID (optional)
+- `FOUNDRY_MODEL` — model name for Foundry / Azure OpenAI Responses (optional but recommended for Azure)
 - `MCP_SERVER_URL` — URL of the MCP server (defaults to http://localhost:8000/mcp/process)
 
 Notes:
