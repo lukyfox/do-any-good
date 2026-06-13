@@ -102,11 +102,10 @@ def start_ui():
 
         # wrap respond to include logging and rationale display
         state = gr.State([])
-        rationale_display = gr.Markdown("")
+        rationale_display = gr.Textbox(label="Decision rationale", lines=4, interactive=False, visible=False)
 
         def respond_and_maybe_log(inp, h, log_enabled):
             out_txt, out_hist, new_state, decision, rationale = respond(inp, h)
-            rationale_text = ""
             if log_enabled:
                 try:
                     import json, os
@@ -122,10 +121,18 @@ def start_ui():
                         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
                 except Exception:
                     pass
-                rationale_text = f"**Decision:** {decision}  \n**Rationale:** {rationale}"
-            return out_txt, out_hist, new_state, rationale_text
+                rationale_text = f"Decision: {decision}\nRationale: {rationale}"
+                return out_txt, out_hist, new_state, gr.update(value=rationale_text, visible=True)
+            return out_txt, out_hist, new_state, gr.update(value="", visible=False)
 
         send.click(respond_and_maybe_log, [txt, state, log_toggle], [txt, chatbot, state, rationale_display])
+
+        def toggle_rationale_visibility(log_enabled):
+            if log_enabled:
+                return gr.update(visible=True, value="")
+            return gr.update(visible=False, value="")
+
+        log_toggle.change(toggle_rationale_visibility, [log_toggle], [rationale_display])
 
         demo.launch()
 
