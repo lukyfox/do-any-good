@@ -18,7 +18,7 @@ from mcp.shared.memory import create_connected_server_and_client_session as conn
 from ..llm_client import LLMClient
 from ..mcp_server import build_mcp
 from ..storage import FileStorage
-from .prompts import SYSTEM_PROMPT
+from .prompts import SYSTEM_PROMPT, profile_context
 from .safety import LLMSafetyChecker, SafetyDecision, SafetyVerdict, refusal_message
 
 MAX_ITERATIONS = 6
@@ -93,11 +93,10 @@ class Agent:
                 history, user_message, refusal_message(verdict), [], verdict.decision
             )
 
-        working: list[dict[str, Any]] = [{"role": "system", "content": self.system_prompt}]
+        system_parts = [self.system_prompt, profile_context(self.storage.load_profile())]
         if verdict.decision == SafetyDecision.WARN and verdict.reason:
-            working.append(
-                {"role": "system", "content": f"Safety note for this request: {verdict.reason}"}
-            )
+            system_parts.append(f"Safety note for this request: {verdict.reason}")
+        working: list[dict[str, Any]] = [{"role": "system", "content": "\n\n".join(system_parts)}]
         working.extend(history)
         working.append({"role": "user", "content": user_message})
 
