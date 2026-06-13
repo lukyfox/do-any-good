@@ -50,10 +50,23 @@ def _extract_response(payload: Dict[str, Any]) -> Any:
                 parsed_val = json.loads(val)
                 return _extract_response(parsed_val) if isinstance(parsed_val, dict) else parsed_val
             except Exception:
+                # Try to eval as Python literal
                 try:
                     parsed_val = ast.literal_eval(val)
                     return _extract_response(parsed_val) if isinstance(parsed_val, dict) else parsed_val
                 except Exception:
+                    # Fallback: extract the last {...} block and try again
+                    m = re.search(r"(\{[\s\S]*\})", val)
+                    if m:
+                        candidate = m.group(1)
+                        try:
+                            parsed_val = ast.literal_eval(candidate)
+                            return _extract_response(parsed_val) if isinstance(parsed_val, dict) else parsed_val
+                        except Exception:
+                            try:
+                                return json.loads(candidate)
+                            except Exception:
+                                return val
                     return val
         return val
 
