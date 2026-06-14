@@ -1,0 +1,30 @@
+# Run the whole app locally: `docker compose up --build`
+# Then open the Gradio client at http://localhost:7860
+services:
+  backend:
+    build: .
+    image: do-any-good
+    command: ["python", "-m", "uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: .env          # Foundry / Azure Search credentials (backend only)
+    environment:
+      DAG_DATA_DIR: /app/data
+    volumes:
+      - dag-data:/app/data
+    ports:
+      - "8000:8000"
+
+  client:
+    build: .
+    image: do-any-good
+    command: ["python", "-m", "client.gradio_app"]
+    depends_on:
+      - backend
+    environment:                       # the client needs no secrets, only the backend URL
+      DAG_BACKEND_URL: http://backend:8000
+      GRADIO_SERVER_NAME: 0.0.0.0
+      GRADIO_SERVER_PORT: "7860"
+    ports:
+      - "7860:7860"
+
+volumes:
+  dag-data:

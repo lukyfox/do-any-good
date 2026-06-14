@@ -1,58 +1,326 @@
+"""Gradio client for the Do Any Good backend.
+
+Talks to the agent over HTTP: chat (/chat), suggestions (/plan/*), and tracking
+(/goodies, /overview). All requests go through `_request`, which tests reroute
+to an in-process TestClient.
+"""
+from __future__ import annotations
+
+import codecs
 import os
-import time
-import requests
+
 import gradio as gr
+import requests
 
-MCP_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8000/mcp/process")
+BACKEND_URL = os.getenv("DAG_BACKEND_URL", "http://localhost:8000").rstrip("/")
+REQUEST_TIMEOUT_SECONDS = 60
+
+# fireworks-js (https://github.com/crashmax-dev/fireworks-js) loaded from CDN; a
+# small helper fires a brief full-screen burst, called when a Goody is marked done.
+FIREWORKS_HEAD = """
+<style>.dag-overview { max-height: 320px; overflow-y: auto; }</style>
+<script src="https://cdn.jsdelivr.net/npm/fireworks-js@2.x/dist/index.umd.js"></script>
+<script>
+window.dagCelebrate = function () {
+  try {
+    var FW = window.Fireworks && (window.Fireworks.default || window.Fireworks);
+    if (!FW) return;
+    var el = document.getElementById('dag-fireworks');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'dag-fireworks';
+      el.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:99999;';
+      document.body.appendChild(el);
+    }
+    var fw = new FW(el, { intensity: 25, explosion: 5 });
+    fw.start();
+    setTimeout(function () { fw.stop(); }, 2500);
+  } catch (e) { console.error('fireworks failed', e); }
+};
+</script>
+"""
 
 
-def call_mcp(question, request_class="goodies_suggester"):
+def _request(
+    method: str, path: str, *, json: dict | None = None, params: dict | None = None
+) -> dict:
     try:
-        r = requests.post(MCP_URL, json={"question": question, "request_class": request_class}, timeout=10)
+        r = requests.request(
+            method, f"{BACKEND_URL}{path}", json=json, params=params,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
         r.raise_for_status()
         return r.json()
-    except Exception as e:
-        return {"error": str(e)}
+    except requests.exceptions.RequestException as err:
+        return {"error": str(err)}
 
 
-def local_tool_get_time():
-    return time.strftime("%Y-%m-%d %H:%M:%S")
+# --- backend calls ---------------------------------------------------------
 
 
-def respond(user_input, history, to_mcp=False):
-    history = history or []
-    history.append(("User", user_input))
-    if to_mcp:
-        resp = call_mcp(user_input)
-        assistant_text = resp.get("response") if isinstance(resp, dict) else str(resp)
-        if isinstance(assistant_text, dict):
-            assistant_text = assistant_text.get("text") or str(assistant_text)
-    else:
-        assistant_text = "I can forward this to MCP or run a local tool. Click 'Send to MCP' to ask the model."
-    history.append(("Assistant", assistant_text))
-    return "", history
+def chat(message: str, history: list[dict]) -> dict:
+    return _request("POST", "/chat", json={"message": message, "history": history})
 
 
-def start_ui():
-    with gr.Blocks() as demo:
-        gr.Markdown("# Goodies Suggester — Gradio Client")
-        chatbot = gr.Chatbot()
-        txt = gr.Textbox(show_label=False, placeholder="Type your message and press Send")
+def stream_chat(message: str, history: list[dict]):
+    """Yield reply text deltas from the streaming endpoint."""
+    try:
+        with requests.post(
+            f"{BACKEND_URL}/chat/stream",
+            json={"message": message, "history": history},
+            stream=True,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        ) as r:
+            r.raise_for_status()
+            decoder = codecs.getincrementaldecoder("utf-8")()
+            for raw in r.iter_content(chunk_size=None):
+                text = decoder.decode(raw)
+                if text:
+                    yield text
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                yield tail
+    except requests.exceptions.RequestException as err:
+        yield f"Error: {err}"
+
+
+def plan_today() -> dict:
+    return _request("POST", "/plan/today")
+
+
+def plan_week() -> dict:
+    return _request("POST", "/plan/week")
+
+
+def list_goodies(status: str | None = None) -> dict:
+    return _request("GET", "/goodies", params={"status": status} if status else None)
+
+
+def set_status(goody_id: str, status: str, summary: str) -> dict:
+    return _request(
+        "POST", f"/goodies/{goody_id}/status",
+        json={"status": status, "summary": summary or None},
+    )
+
+
+def delete_goody(goody_id: str) -> dict:
+    return _request("DELETE", f"/goodies/{goody_id}")
+
+
+def overview() -> dict:
+    return _request("GET", "/overview")
+
+
+# --- pure formatting helpers ----------------------------------------------
+
+
+def format_goody(goody: dict) -> str:
+    if not isinstance(goody, dict):
+        return str(goody)
+    title = goody.get("title", "(untitled)")
+    category = goody.get("category", "")
+    parts = [f"**{title}**" + (f" _({category})_" if category else "")]
+    if goody.get("description"):
+        parts.append(goody["description"])
+    if goody.get("link"):
+        parts.append(f"[{goody['link']}]({goody['link']})")
+    return "\n".join(parts)
+
+
+def _overview_item(goody: dict) -> str:
+    date = goody.get("date", "")
+    title = goody.get("title", "")
+    link = goody.get("link")
+    return f"- {date}: " + (f"[{title}]({link})" if link else title)
+
+
+def format_plan(goodies: list[dict]) -> str:
+    if not goodies:
+        return "_No suggestions._"
+    rows = []
+    for i, goody in enumerate(goodies, start=1):
+        date = goody.get("date")
+        rows.append(f"{i}. {format_goody(goody)}" + (f"  \n*{date}*" if date else ""))
+    return "\n\n".join(rows)
+
+
+def format_overview(data: dict) -> str:
+    if not isinstance(data, dict) or "counts" not in data:
+        return "_No data yet._"
+    c = data["counts"]
+    lines = [
+        f"**Goodies**: planned {c['planned']}, done {c['done']}, missed {c['missed']} "
+        f"(self {c['self']} / others {c['others']})",
+    ]
+    for status in ("planned", "done", "missed"):
+        items = data.get(status, [])
+        if items:
+            lines.append(f"\n**{status.capitalize()}:**")
+            lines += [_overview_item(g) for g in items]
+    return "\n".join(lines)
+
+
+def planned_choices(goodies: list[dict]) -> list[tuple[str, str]]:
+    return [
+        (f"{g.get('date', '')} - {g.get('title', '')}", g["id"]) for g in goodies if g.get("id")
+    ]
+
+
+# --- UI --------------------------------------------------------------------
+
+
+def _assistant(history: list[dict], text: str) -> list[dict]:
+    return history + [{"role": "assistant", "content": text}]
+
+
+def _overview_md() -> str:
+    return format_overview(overview())
+
+
+def _planned_update():
+    return gr.update(choices=planned_choices(list_goodies(status="planned").get("goodies", [])))
+
+
+def view_choices(goodies: list[dict]) -> list[tuple[str, str]]:
+    """Done/missed Goodies only (those that can carry a summary)."""
+    return [
+        (f"{g.get('date', '')} - {g.get('title', '')} [{g.get('status', '')}]", g["id"])
+        for g in goodies
+        if g.get("id") and g.get("status") in ("done", "missed")
+    ]
+
+
+def _view_update():
+    return gr.update(choices=view_choices(list_goodies().get("goodies", [])))
+
+
+def on_view(goody_id: str) -> str:
+    if not goody_id:
+        return ""
+    match = next((g for g in list_goodies().get("goodies", []) if g.get("id") == goody_id), None)
+    if match is None:
+        return ""
+    return match.get("user_summary") or "(no summary recorded)"
+
+
+def build_ui() -> gr.Blocks:
+    with gr.Blocks(title="Do Any Good") as demo:
+        gr.Markdown("# Do Any Good\nDo one good deed a day - a *Goody*.")
+        state = gr.State([])
         with gr.Row():
-            send = gr.Button("Send")
-            send_mcp = gr.Button("Send to MCP")
-            tool_btn = gr.Button("Get time (tool)")
+            with gr.Column(scale=3):
+                chatbot = gr.Chatbot(label="Chat")
+                txt = gr.Textbox(show_label=False, placeholder="Talk to your DAG assistant...")
+                with gr.Row():
+                    send = gr.Button("Send", variant="primary")
+                    today_btn = gr.Button("Suggest today's Goody")
+                    week_btn = gr.Button("Plan my week")
+                view_dd = gr.Dropdown(label="View a Goody's summary", choices=[])
+                summary_view = gr.Textbox(label="Goody summary", interactive=False, lines=3)
+            with gr.Column(scale=2):
+                overview_md = gr.Markdown("_No data yet._", elem_classes=["dag-overview"])
+                refresh_btn = gr.Button("Refresh overview")
+                gr.Markdown("### Record a Goody")
+                goody_dd = gr.Dropdown(label="Planned Goody", choices=[])
+                status_radio = gr.Radio(["done", "missed"], value="done", label="Status")
+                summary_box = gr.Textbox(label="Your summary (optional)")
+                with gr.Row():
+                    record_btn = gr.Button("Record")
+                    delete_btn = gr.Button("Delete", variant="stop")
 
-        send.click(lambda inp, h: respond(inp, h, to_mcp=False), [txt, chatbot], [txt, chatbot])
-        send_mcp.click(lambda inp, h: respond(inp, h, to_mcp=True), [txt, chatbot], [txt, chatbot])
-        def run_tool(h):
-            h = h or []
-            h.append(("Tool", local_tool_get_time()))
-            return "", h
-        tool_btn.click(run_tool, [chatbot], [txt, chatbot])
+        def on_send(message, history):
+            message = (message or "").strip()
+            if not message:
+                yield "", history, history, gr.update(), gr.update()
+                return
+            prior = history or []
+            accumulated = ""
+            for chunk in stream_chat(message, prior):
+                accumulated += chunk
+                shown = prior + [
+                    {"role": "user", "content": message},
+                    {"role": "assistant", "content": accumulated},
+                ]
+                yield "", shown, shown, gr.update(), gr.update()
+            final = prior + [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": accumulated},
+            ]
+            yield "", final, final, _overview_md(), _planned_update()
 
-        demo.launch()
+        def on_today(history):
+            result = plan_today()
+            goody = result.get("goody")
+            body = format_goody(goody) if goody else result.get("error", "(failed)")
+            history = _assistant(history, f"Today's Goody:\n\n{body}")
+            return history, history, _overview_md(), _planned_update(), _view_update()
+
+        def on_week(history):
+            result = plan_week()
+            goodies = result.get("goodies")
+            body = format_plan(goodies) if goodies else result.get("error", "(failed)")
+            history = _assistant(history, f"Your week:\n\n{body}")
+            return history, history, _overview_md(), _planned_update(), _view_update()
+
+        def on_record(goody_id, status, summary, history):
+            shown_summary = ""
+            if goody_id:
+                result = set_status(goody_id, status, summary)
+                label = result.get("title", goody_id) if "error" not in result else result["error"]
+                history = _assistant(history, f"Recorded **{label}** as {status}.")
+                shown_summary = summary or "(no summary)"
+            return (
+                history,
+                history,
+                _overview_md(),
+                _planned_update(),
+                _view_update(),
+                shown_summary,
+                "",
+            )
+
+        def on_delete(goody_id, history):
+            if goody_id:
+                result = delete_goody(goody_id)
+                note = "Deleted." if "error" not in result else result["error"]
+                history = _assistant(history, note)
+            return history, history, _overview_md(), _planned_update(), _view_update()
+
+        chat_outputs = [txt, chatbot, state, overview_md, goody_dd]
+        send.click(on_send, [txt, state], chat_outputs)
+        txt.submit(on_send, [txt, state], chat_outputs)
+        today_btn.click(on_today, [state], [chatbot, state, overview_md, goody_dd, view_dd])
+        week_btn.click(on_week, [state], [chatbot, state, overview_md, goody_dd, view_dd])
+        refresh_btn.click(
+            lambda: (_overview_md(), _planned_update(), _view_update()),
+            None,
+            [overview_md, goody_dd, view_dd],
+        )
+        record_btn.click(
+            on_record,
+            [goody_dd, status_radio, summary_box, state],
+            [chatbot, state, overview_md, goody_dd, view_dd, summary_view, summary_box],
+        )
+        record_btn.click(
+            None,
+            [goody_dd, status_radio],
+            None,
+            js=(
+                "(gid, status) => { if (gid && status === 'done' && window.dagCelebrate)"
+                " window.dagCelebrate(); }"
+            ),
+        )
+        delete_btn.click(
+            on_delete, [goody_dd, state], [chatbot, state, overview_md, goody_dd, view_dd]
+        )
+        view_dd.change(on_view, view_dd, summary_view)
+        demo.load(
+            lambda: (_overview_md(), _planned_update(), _view_update()),
+            None,
+            [overview_md, goody_dd, view_dd],
+        )
+    return demo
 
 
 if __name__ == "__main__":
-    start_ui()
+    build_ui().launch(head=FIREWORKS_HEAD)
