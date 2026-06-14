@@ -10,37 +10,7 @@ thematic diary.
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    User([User])
-    Client["Gradio client<br/>:7860 · chat · suggest · track"]
-
-    subgraph Backend["FastAPI backend · :8000"]
-        Agent["Agent (MCP host)<br/>safety gate · tool-call loop"]
-        MCP["MCP tools server<br/>7 profile / Goody / journal tools"]
-        Storage[("File storage<br/>Markdown · JSONL")]
-        RAG["RAG client<br/>embed · match"]
-    end
-
-    subgraph Azure["Azure / Foundry (external)"]
-        OpenAI["Azure OpenAI / Foundry<br/>Responses API · web search · embeddings"]
-        Search[("Azure AI Search<br/>vector index: dag-goodies")]
-    end
-
-    User -->|interacts| Client
-    Client -->|HTTP / SSE| Agent
-    Agent -->|in-process MCP| MCP
-    MCP --> Storage
-    Agent -->|Responses API + web search| OpenAI
-    Agent --> RAG
-    RAG -->|embeddings| OpenAI
-    RAG -->|save / vector match| Search
-
-    classDef core fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f;
-    classDef cloud fill:#ccfbf1,stroke:#14b8a6,color:#134e4a;
-    class Agent core;
-    class OpenAI,Search cloud;
-```
+![Architecture Diagram](/static/img/do-any-good-architecture.png "Architecture Diagram")
 
 - **Backend agent** (`backend/app/agent`) — runs a safety gate, then a tool-calling loop. It is
   an MCP *host*: it connects to the tools server in-process and exposes the tools to the model, plus
@@ -66,6 +36,15 @@ python -m uvicorn backend.app.main:app --reload
 
 # Terminal 2 — Gradio client
 python -m client.gradio_app
+
+ev. without activating venv 
+
+# Terminal 1 — backend (agent API on :8000)
+.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --port 8000
+
+# Terminal 2 — Gradio UI (on :7860, talks to the backend)
+.\.venv\Scripts\python.exe -m client.gradio_app
+
 ```
 
 Then open the URL the client prints (default http://127.0.0.1:7860). Without a configured
