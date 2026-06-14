@@ -64,9 +64,11 @@ def build_mcp(storage: FileStorage) -> FastMCP:
         why: str | None = None,
         how: str | None = None,
         bonus: str | None = None,
+        link: str | None = None,
     ) -> dict[str, Any]:
         """Add a planned Goody. `date` is ISO (YYYY-MM-DD) — today or a future day;
-        `category` is 'self' or 'others'."""
+        `category` is 'self' or 'others'. Pass `link` with a relevant URL (e.g. a
+        campaign or organization page) when the deed references one."""
         goody = Goody(
             date=date_cls.fromisoformat(date),
             title=title,
@@ -75,6 +77,7 @@ def build_mcp(storage: FileStorage) -> FastMCP:
             why=why,
             how=how,
             bonus=bonus,
+            link=link,
         )
         return storage.add_goody(goody).model_dump(mode="json")
 

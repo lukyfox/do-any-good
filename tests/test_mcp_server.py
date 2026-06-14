@@ -141,3 +141,25 @@ def test_delete_goody(tmp_path):
 
     anyio.run(scenario)
     assert storage.list_goodies() == []  # mutated on disk
+
+
+def test_add_goody_with_link(tmp_path):
+    storage = FileStorage(tmp_path)
+
+    async def scenario():
+        async with connected(build_mcp(storage)) as s:
+            added = _json(
+                await s.call_tool(
+                    "add_goody",
+                    {
+                        "date": "2026-06-14",
+                        "title": "Support a campaign",
+                        "category": "others",
+                        "link": "https://donio.cz/example",
+                    },
+                )
+            )
+            assert added["link"] == "https://donio.cz/example"
+
+    anyio.run(scenario)
+    assert storage.list_goodies()[0].link == "https://donio.cz/example"

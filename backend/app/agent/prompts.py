@@ -14,7 +14,8 @@ SYSTEM_PROMPT = (
     "Use the available tools to read and update the user's profile and Goody history, and "
     "to record journal entries. You can also search the web (results include citations) to "
     "find current campaigns, charities, or local volunteer opportunities when the user wants "
-    "real options. "
+    "real options. When a Goody references a specific campaign or organization, include its "
+    "URL in the add_goody `link` field so the user can open it. "
     "Take the user's profile into account when suggesting deeds.\n\n"
     "Reply in the user's language (Czech or English). Be warm and concise."
 )

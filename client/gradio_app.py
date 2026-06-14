@@ -94,9 +94,19 @@ def format_goody(goody: dict) -> str:
         return str(goody)
     title = goody.get("title", "(untitled)")
     category = goody.get("category", "")
-    line = f"**{title}**" + (f" _({category})_" if category else "")
-    description = goody.get("description")
-    return f"{line}\n{description}" if description else line
+    parts = [f"**{title}**" + (f" _({category})_" if category else "")]
+    if goody.get("description"):
+        parts.append(goody["description"])
+    if goody.get("link"):
+        parts.append(f"[{goody['link']}]({goody['link']})")
+    return "\n".join(parts)
+
+
+def _overview_item(goody: dict) -> str:
+    date = goody.get("date", "")
+    title = goody.get("title", "")
+    link = goody.get("link")
+    return f"- {date}: " + (f"[{title}]({link})" if link else title)
 
 
 def format_plan(goodies: list[dict]) -> str:
@@ -121,7 +131,7 @@ def format_overview(data: dict) -> str:
         items = data.get(status, [])
         if items:
             lines.append(f"\n**{status.capitalize()}:**")
-            lines += [f"- {g.get('date', '')}: {g.get('title', '')}" for g in items]
+            lines += [_overview_item(g) for g in items]
     return "\n".join(lines)
 
 

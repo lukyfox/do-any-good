@@ -47,6 +47,24 @@ def test_planned_choices():
     assert choices == [("2026-06-14 - A", "1")]
 
 
+def test_format_goody_shows_link():
+    md = gradio_app.format_goody(
+        {"title": "X", "category": "others", "link": "https://donio.cz/x"}
+    )
+    assert "https://donio.cz/x" in md
+
+
+def test_format_overview_shows_link():
+    data = {
+        "counts": {"total": 1, "planned": 1, "done": 0, "missed": 0, "self": 0, "others": 1},
+        "planned": [{"date": "2026-06-14", "title": "Campaign", "link": "https://donio.cz/x"}],
+        "done": [],
+        "missed": [],
+    }
+    md = gradio_app.format_overview(data)
+    assert "(https://donio.cz/x)" in md  # rendered as a markdown link
+
+
 # --- HTTP wrappers (mocked transport) -------------------------------------
 
 

@@ -112,3 +112,16 @@ def test_delete_goody_missing_raises(tmp_path):
     store = FileStorage(tmp_path)
     with pytest.raises(GoodyNotFoundError):
         store.delete_goody("nope")
+
+
+def test_goody_link_roundtrip(tmp_path):
+    store = FileStorage(tmp_path)
+    g = store.add_goody(
+        Goody(
+            date=date(2026, 6, 14),
+            title="Support campaign",
+            category=GoodyCategory.OTHERS,
+            link="https://donio.cz/example",
+        )
+    )
+    assert store.get_goody(g.id).link == "https://donio.cz/example"

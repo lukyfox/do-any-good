@@ -25,6 +25,7 @@ class GoodySuggestion(BaseModel):
     why: str | None = None
     how: str | None = None
     bonus: str | None = None
+    link: str | None = None
 
 
 DEFAULT_SELF_GOODY = GoodySuggestion(
@@ -44,6 +45,7 @@ _SUGGESTION_PROPS = {
     "why": {"type": "string"},
     "how": {"type": "string"},
     "bonus": {"type": "string"},
+    "link": {"type": "string"},
 }
 _SUGGESTION_OBJECT = {
     "type": "object",
@@ -123,6 +125,7 @@ def _to_goody(suggestion: GoodySuggestion, on: date_cls) -> Goody:
         why=suggestion.why,
         how=suggestion.how,
         bonus=suggestion.bonus,
+        link=suggestion.link,
         status=GoodyStatus.PLANNED,
     )
 

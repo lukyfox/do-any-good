@@ -58,6 +58,7 @@ class Goody(BaseModel):
     why: str | None = None
     how: str | None = None
     bonus: str | None = None
+    link: str | None = None
     user_summary: str | None = None
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
