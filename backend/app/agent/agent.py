@@ -9,7 +9,7 @@ Persistent state lives in storage; only conversation turns are kept in history.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
@@ -85,6 +85,22 @@ class Agent:
             for t in listed.tools
         ]
 
+    def _build_working(
+        self, history: list[dict[str, Any]], user_message: str, verdict: SafetyVerdict
+    ) -> list[dict[str, Any]]:
+        system_parts = [
+            self.system_prompt,
+            f"Today's date is {date.today().isoformat()}.",
+            profile_context(self.storage.load_profile()),
+        ]
+        if verdict.decision == SafetyDecision.WARN and verdict.reason:
+            system_parts.append(f"Safety note for this request: {verdict.reason}")
+        return [
+            {"role": "system", "content": "\n\n".join(system_parts)},
+            *history,
+            {"role": "user", "content": user_message},
+        ]
+
     async def run(
         self, user_message: str, history: list[dict[str, Any]] | None = None
     ) -> AgentResult:
@@ -95,16 +111,7 @@ class Agent:
                 history, user_message, refusal_message(verdict), [], verdict.decision
             )
 
-        system_parts = [
-            self.system_prompt,
-            f"Today's date is {date.today().isoformat()}.",
-            profile_context(self.storage.load_profile()),
-        ]
-        if verdict.decision == SafetyDecision.WARN and verdict.reason:
-            system_parts.append(f"Safety note for this request: {verdict.reason}")
-        working: list[dict[str, Any]] = [{"role": "system", "content": "\n\n".join(system_parts)}]
-        working.extend(history)
-        working.append({"role": "user", "content": user_message})
+        working = self._build_working(history, user_message, verdict)
 
         tools_called: list[str] = []
         reply = ""
@@ -137,6 +144,51 @@ class Agent:
                 reply = "I couldn't complete that in time — could you rephrase?"
 
         return self._turn(history, user_message, reply, tools_called, verdict.decision)
+
+    async def run_stream(
+        self, user_message: str, history: list[dict[str, Any]] | None = None
+    ) -> AsyncIterator[str]:
+        """Stream the final reply text. A safety refusal is yielded whole; tool
+        turns run silently; the final model turn streams its token deltas."""
+        history = history or []
+        verdict = self.safety(user_message)
+        if verdict.decision == SafetyDecision.REFUSE:
+            yield refusal_message(verdict)
+            return
+
+        working = self._build_working(history, user_message, verdict)
+        async with connected(build_mcp(self.storage)) as session:
+            tools = await self._mcp_tools(session)
+            for _ in range(self.max_iterations):
+                gen = self.llm.stream(working, tools=tools)
+                result = None
+                while True:
+                    try:
+                        delta = next(gen)
+                    except StopIteration as stop:
+                        result = stop.value
+                        break
+                    yield delta
+                if result is None or not result.tool_calls:
+                    return
+                for call in result.tool_calls:
+                    output = await session.call_tool(call.name, call.arguments)
+                    working.append(
+                        {
+                            "type": "function_call",
+                            "call_id": call.call_id,
+                            "name": call.name,
+                            "arguments": json.dumps(call.arguments),
+                        }
+                    )
+                    working.append(
+                        {
+                            "type": "function_call_output",
+                            "call_id": call.call_id,
+                            "output": _tool_result_text(output),
+                        }
+                    )
+            yield "\n\n(I couldn't finish that in time - please try rephrasing.)"
 
     def suggest_today(self, on: date | None = None) -> Goody:
         """Generate and persist one planned Goody (defaults to tomorrow)."""

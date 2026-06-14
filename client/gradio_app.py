@@ -6,6 +6,7 @@ to an in-process TestClient.
 """
 from __future__ import annotations
 
+import codecs
 import os
 
 import gradio as gr
@@ -34,6 +35,28 @@ def _request(
 
 def chat(message: str, history: list[dict]) -> dict:
     return _request("POST", "/chat", json={"message": message, "history": history})
+
+
+def stream_chat(message: str, history: list[dict]):
+    """Yield reply text deltas from the streaming endpoint."""
+    try:
+        with requests.post(
+            f"{BACKEND_URL}/chat/stream",
+            json={"message": message, "history": history},
+            stream=True,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        ) as r:
+            r.raise_for_status()
+            decoder = codecs.getincrementaldecoder("utf-8")()
+            for raw in r.iter_content(chunk_size=None):
+                text = decoder.decode(raw)
+                if text:
+                    yield text
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                yield tail
+    except requests.exceptions.RequestException as err:
+        yield f"Error: {err}"
 
 
 def plan_today() -> dict:
@@ -141,10 +164,24 @@ def build_ui() -> gr.Blocks:
                 record_btn = gr.Button("Record")
 
         def on_send(message, history):
-            if message and message.strip():
-                result = chat(message, history)
-                history = result.get("history") or _assistant(history, result.get("error", "..."))
-            return "", history, history, _overview_md(), _planned_update()
+            message = (message or "").strip()
+            if not message:
+                yield "", history, history, gr.update(), gr.update()
+                return
+            prior = history or []
+            accumulated = ""
+            for chunk in stream_chat(message, prior):
+                accumulated += chunk
+                shown = prior + [
+                    {"role": "user", "content": message},
+                    {"role": "assistant", "content": accumulated},
+                ]
+                yield "", shown, shown, gr.update(), gr.update()
+            final = prior + [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": accumulated},
+            ]
+            yield "", final, final, _overview_md(), _planned_update()
 
         def on_today(history):
             result = plan_today()

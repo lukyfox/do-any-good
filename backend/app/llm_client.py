@@ -8,6 +8,7 @@ json_schema structured output; MockLLMClient is used offline and in tests.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -123,6 +124,32 @@ def parse_responses(payload: dict[str, Any]) -> LLMResult:
     return result
 
 
+def _iter_sse_data(response) -> Iterator[dict[str, Any]]:
+    """Yield parsed JSON objects from the `data:` lines of an SSE response."""
+    for raw in response.iter_lines(decode_unicode=True):
+        if not raw or not raw.startswith("data:"):
+            continue
+        payload = raw[5:].strip()
+        if payload == "[DONE]":
+            return
+        try:
+            yield json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+
+
+def _function_call_from_item(item: dict[str, Any]) -> ToolCall:
+    try:
+        arguments = json.loads(item.get("arguments") or "{}")
+    except json.JSONDecodeError:
+        arguments = {}
+    return ToolCall(
+        call_id=item.get("call_id") or item.get("id", ""),
+        name=item.get("name", ""),
+        arguments=arguments,
+    )
+
+
 class LLMClient:
     """Interface for completion backends."""
 
@@ -134,6 +161,18 @@ class LLMClient:
         response_schema: dict[str, Any] | None = None,
     ) -> LLMResult:
         raise NotImplementedError
+
+    def stream(
+        self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None
+    ) -> Iterator[str]:
+        """Yield reply text deltas and return the full LLMResult.
+
+        Default: a non-streaming fallback that emits the whole reply as one chunk.
+        """
+        result = self.complete(messages, tools=tools)
+        if result.text:
+            yield result.text
+        return result
 
 
 class MockLLMClient(LLMClient):
@@ -172,6 +211,33 @@ class FoundryResponsesClient(LLMClient):
         )
         response.raise_for_status()
         return parse_responses(response.json())
+
+    def stream(self, messages, *, tools=None) -> Iterator[str]:
+        s = self._settings
+        payload = build_responses_payload(messages, model=s.foundry_model, tools=tools)
+        payload["stream"] = True
+        url = (s.foundry_responses_url or "").rstrip("/")
+        result = LLMResult()
+        with requests.post(
+            url,
+            json=payload,
+            headers=_headers(s),
+            timeout=REQUEST_TIMEOUT_SECONDS,
+            stream=True,
+        ) as response:
+            response.raise_for_status()
+            for data in _iter_sse_data(response):
+                kind = data.get("type")
+                if kind == "response.output_text.delta":
+                    delta = data.get("delta", "")
+                    if delta:
+                        result.text = (result.text or "") + delta
+                        yield delta
+                elif kind == "response.output_item.done":
+                    item = data.get("item", {})
+                    if item.get("type") == "function_call":
+                        result.tool_calls.append(_function_call_from_item(item))
+        return result
 
 
 def get_llm_client() -> LLMClient:

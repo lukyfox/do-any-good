@@ -1,12 +1,13 @@
 """HTTP backend for the Gradio client.
 
-Exposes the agent at /chat (M4). The legacy /mcp/process endpoint remains as a
-thin interim shim until the client is rebuilt in M9.
+Exposes the agent at /chat (buffered) and /chat/stream (token streaming), plus
+suggestion and tracking endpoints.
 """
 from datetime import date
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .agent import Agent
@@ -55,6 +56,19 @@ async def chat(
 ) -> dict:
     result = await Agent(storage, llm).run(req.message, req.history)
     return {"reply": result.reply, "history": result.history}
+
+
+@app.post("/chat/stream")
+async def chat_stream(
+    req: ChatRequest,
+    storage: Annotated[FileStorage, Depends(get_storage)],
+    llm: Annotated[LLMClient, Depends(get_agent_llm)],
+) -> StreamingResponse:
+    async def deltas():
+        async for delta in Agent(storage, llm).run_stream(req.message, req.history):
+            yield delta
+
+    return StreamingResponse(deltas(), media_type="text/plain; charset=utf-8")
 
 
 @app.post("/plan/today")
