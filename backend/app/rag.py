@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import random
 import uuid
+from functools import lru_cache
 from typing import Protocol
 
 import requests
@@ -85,14 +86,14 @@ class AzureSearchRagStore:
 
         self._settings = settings or get_settings()
         s = self._settings
-        self._ensure_index()
+        self._ensure_index(len(_embed("profile descriptor", s)))
         self._client = SearchClient(
             s.azure_search_endpoint,
             s.azure_search_index,
             AzureKeyCredential(s.azure_search_key or ""),
         )
 
-    def _ensure_index(self) -> None:
+    def _ensure_index(self, dimensions: int) -> None:
         from azure.core.credentials import AzureKeyCredential
         from azure.search.documents.indexes import SearchIndexClient
         from azure.search.documents.indexes.models import (
@@ -117,7 +118,7 @@ class AzureSearchRagStore:
                     name="profile_vector",
                     type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
                     searchable=True,
-                    vector_search_dimensions=s.embedding_dimensions,
+                    vector_search_dimensions=dimensions,
                     vector_search_profile_name="dag-prof",
                 ),
             ],
@@ -167,6 +168,7 @@ class AzureSearchRagStore:
             return None
 
 
+@lru_cache
 def get_rag_store() -> RagStore:
     """Return the Azure-backed store when configured, else a no-op store."""
     settings = get_settings()

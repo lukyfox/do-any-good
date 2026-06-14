@@ -24,7 +24,6 @@ class Settings:
     web_search_enabled: bool = True
     foundry_embedding_model: str | None = None
     foundry_embeddings_url: str | None = None
-    embedding_dimensions: int = 1536
     azure_search_endpoint: str | None = None
     azure_search_key: str | None = None
     azure_search_index: str = "dag-goodies"
@@ -71,7 +70,6 @@ def get_settings() -> Settings:
         web_search_enabled=os.getenv("DAG_WEB_SEARCH", "true").lower() != "false",
         foundry_embedding_model=os.getenv("FOUNDRY_EMBEDDING_MODEL"),
         foundry_embeddings_url=os.getenv("FOUNDRY_EMBEDDINGS_URL"),
-        embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", "1536")),
         azure_search_endpoint=os.getenv("AZURE_SEARCH_ENDPOINT"),
         azure_search_key=os.getenv("AZURE_SEARCH_KEY"),
         azure_search_index=os.getenv("AZURE_SEARCH_INDEX", "dag-goodies"),
