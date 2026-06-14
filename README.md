@@ -10,18 +10,48 @@ thematic diary.
 
 ## Architecture
 
-```
-Gradio client  --HTTP-->  Backend agent (FastAPI)  -->  Foundry / Azure OpenAI (Responses API)
-                              |  (MCP host/client)
-                              +--MCP-->  MCP tools server  -->  Markdown/JSON file storage
+```mermaid
+flowchart TD
+    User([User])
+    Client["Gradio client<br/>:7860 · chat · suggest · track"]
+
+    subgraph Backend["FastAPI backend · :8000"]
+        Agent["Agent (MCP host)<br/>safety gate · tool-call loop"]
+        MCP["MCP tools server<br/>7 profile / Goody / journal tools"]
+        Storage[("File storage<br/>Markdown · JSONL")]
+        RAG["RAG client<br/>embed · match"]
+    end
+
+    subgraph Azure["Azure / Foundry (external)"]
+        OpenAI["Azure OpenAI / Foundry<br/>Responses API · web search · embeddings"]
+        Search[("Azure AI Search<br/>vector index: dag-goodies")]
+    end
+
+    User -->|interacts| Client
+    Client -->|HTTP / SSE| Agent
+    Agent -->|in-process MCP| MCP
+    MCP --> Storage
+    Agent -->|Responses API + web search| OpenAI
+    Agent --> RAG
+    RAG -->|embeddings| OpenAI
+    RAG -->|save / vector match| Search
+
+    classDef core fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f;
+    classDef cloud fill:#ccfbf1,stroke:#14b8a6,color:#134e4a;
+    class Agent core;
+    class OpenAI,Search cloud;
 ```
 
 - **Backend agent** (`backend/app/agent`) — runs a safety gate, then a tool-calling loop. It is
-  an MCP *host*: it connects to the tools server in-process and exposes the tools to the model.
+  an MCP *host*: it connects to the tools server in-process and exposes the tools to the model, plus
+  a **built-in web search** tool (Bing-grounded, run server-side by Azure/Foundry — no external API).
 - **MCP tools server** (`backend/app/mcp_server`) — a real MCP server over the storage layer
   (profile, Goodies, journal). Used in-process by the agent; can also run standalone over stdio.
 - **Storage** (`backend/app/storage`) — profile as Markdown + JSON frontmatter (versioned),
   Goodies as JSONL, journal as Markdown, under `DAG_DATA_DIR` (default `./data`).
+- **RAG** (`backend/app/rag.py`) — on completing a Goody, an *anonymized* profile → Goody record is
+  embedded (Azure OpenAI) and stored in **Azure AI Search** (the vector engine behind Foundry IQ);
+  weekly planning folds in one Goody from a similar profile. No-ops when unconfigured.
 - **Gradio client** (`client/gradio_app.py`) — chat, suggestions, progress overview, tracking.
 
 ## Quick start (Windows / PowerShell)
