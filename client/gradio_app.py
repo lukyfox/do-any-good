@@ -231,6 +231,7 @@ def build_ui() -> gr.Blocks:
             [chatbot, state, overview_md, goody_dd, summary_box],
         )
         delete_btn.click(on_delete, [goody_dd, state], [chatbot, state, overview_md, goody_dd])
+        demo.load(lambda: (_overview_md(), _planned_update()), None, [overview_md, goody_dd])
     return demo
 
 
