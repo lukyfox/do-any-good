@@ -125,3 +125,19 @@ def test_goody_link_roundtrip(tmp_path):
         )
     )
     assert store.get_goody(g.id).link == "https://donio.cz/example"
+
+
+def test_load_profile_recovers_from_history_when_current_corrupt(tmp_path):
+    store = FileStorage(tmp_path)
+    store.save_profile(UserProfile(nickname="Aleš", preferences=["help elderly"]))
+    store.profile_path.write_text("", encoding="utf-8")  # simulate a truncated write
+    recovered = store.load_profile()
+    assert recovered is not None
+    assert recovered.nickname == "Aleš"
+
+
+def test_load_profile_none_when_empty_and_no_history(tmp_path):
+    store = FileStorage(tmp_path)
+    store.profile_dir.mkdir(parents=True, exist_ok=True)
+    store.profile_path.write_text("", encoding="utf-8")
+    assert store.load_profile() is None

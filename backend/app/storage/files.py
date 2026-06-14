@@ -17,6 +17,8 @@ from datetime import date as date_cls
 from datetime import datetime, timezone
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from .models import Goody, GoodyNotFoundError, GoodyStatus, JournalEntry, UserProfile
 
 _FENCE = "---"
@@ -63,11 +65,25 @@ class FileStorage:
 
     # -- profile ----------------------------------------------------------
 
-    def load_profile(self) -> UserProfile | None:
-        if not self.profile_path.exists():
+    def _load_profile_file(self, path: Path) -> UserProfile | None:
+        """Read one profile file, tolerating a missing, empty, or corrupt file."""
+        if not path.exists():
             return None
-        data = self._read_frontmatter(self.profile_path.read_text(encoding="utf-8"))
-        return UserProfile.model_validate(data)
+        try:
+            return UserProfile.model_validate(
+                self._read_frontmatter(path.read_text(encoding="utf-8"))
+            )
+        except (ValueError, ValidationError):
+            return None
+
+    def load_profile(self) -> UserProfile | None:
+        current = self._load_profile_file(self.profile_path)
+        if current is not None:
+            return current
+        # current.md missing or corrupt (e.g. truncated by an interrupted write):
+        # fall back to the latest saved version.
+        history = self.profile_history()
+        return history[-1] if history else None
 
     def save_profile(self, profile: UserProfile) -> UserProfile:
         existing = self.load_profile()
@@ -88,16 +104,14 @@ class FileStorage:
         if not self.profile_history_dir.exists():
             return []
         profiles = [
-            UserProfile.model_validate(self._read_frontmatter(p.read_text(encoding="utf-8")))
-            for p in self.profile_history_dir.glob("v*.md")
+            profile
+            for path in self.profile_history_dir.glob("v*.md")
+            if (profile := self._load_profile_file(path)) is not None
         ]
         return sorted(profiles, key=lambda p: p.version)
 
     def load_profile_version(self, version: int) -> UserProfile | None:
-        path = self.profile_history_dir / f"v{version}.md"
-        if not path.exists():
-            return None
-        return UserProfile.model_validate(self._read_frontmatter(path.read_text(encoding="utf-8")))
+        return self._load_profile_file(self.profile_history_dir / f"v{version}.md")
 
     # -- goodies ----------------------------------------------------------
 
