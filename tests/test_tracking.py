@@ -91,3 +91,15 @@ def test_journal_endpoints(tmp_path):
         assert "Den 1" in markdown
     finally:
         app.dependency_overrides.clear()
+
+
+def test_delete_goody_endpoint(tmp_path):
+    storage = FileStorage(tmp_path)
+    g = storage.add_goody(Goody(date=date(2026, 6, 13), title="X", category=GoodyCategory.SELF))
+    try:
+        client = _client(storage)
+        assert client.delete(f"/goodies/{g.id}").status_code == 200
+        assert storage.get_goody(g.id) is None
+        assert client.delete("/goodies/nope").status_code == 404
+    finally:
+        app.dependency_overrides.clear()

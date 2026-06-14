@@ -105,6 +105,15 @@ def build_mcp(storage: FileStorage) -> FastMCP:
         return updated.model_dump(mode="json")
 
     @mcp.tool()
+    def delete_goody(goody_id: str) -> dict[str, Any]:
+        """Permanently delete a Goody by id (use for unwanted entries)."""
+        try:
+            storage.delete_goody(goody_id)
+        except GoodyNotFoundError as err:
+            raise ValueError(f"Goody not found: {err}") from err
+        return {"deleted": goody_id}
+
+    @mcp.tool()
     def append_journal(
         text: str, title: str | None = None, goody_id: str | None = None
     ) -> dict[str, Any]:

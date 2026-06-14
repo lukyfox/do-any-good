@@ -99,3 +99,16 @@ def test_journal_append_and_read(tmp_path):
     content = store.read_journal()
     assert "Pomohl jsem sousedovi." in content
     assert content.index("Den první") < content.index("Day two")  # append order preserved
+
+
+def test_delete_goody(tmp_path):
+    store = FileStorage(tmp_path)
+    g = store.add_goody(Goody(date=date(2026, 6, 13), title="X", category=GoodyCategory.SELF))
+    store.delete_goody(g.id)
+    assert store.list_goodies() == []
+
+
+def test_delete_goody_missing_raises(tmp_path):
+    store = FileStorage(tmp_path)
+    with pytest.raises(GoodyNotFoundError):
+        store.delete_goody("nope")

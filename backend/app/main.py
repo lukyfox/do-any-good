@@ -113,6 +113,18 @@ async def update_goody_status(
     return goody.model_dump(mode="json")
 
 
+@app.delete("/goodies/{goody_id}")
+async def delete_goody(
+    goody_id: str,
+    storage: Annotated[FileStorage, Depends(get_storage)],
+) -> dict:
+    try:
+        storage.delete_goody(goody_id)
+    except GoodyNotFoundError as err:
+        raise HTTPException(status_code=404, detail="Goody not found") from err
+    return {"deleted": goody_id}
+
+
 @app.get("/overview")
 async def get_overview(storage: Annotated[FileStorage, Depends(get_storage)]) -> dict:
     return build_overview(storage)

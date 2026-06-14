@@ -113,5 +113,19 @@ def test_e2e_plan_week_enforces_self(tmp_path, monkeypatch):
         app.dependency_overrides.clear()
 
 
+def test_delete_goody_calls_backend(monkeypatch):
+    captured = {}
+
+    def fake(method, path, *, json=None, params=None):
+        captured.update(method=method, path=path)
+        return {"deleted": "abc"}
+
+    monkeypatch.setattr(gradio_app, "_request", fake)
+    out = gradio_app.delete_goody("abc")
+    assert captured["method"] == "DELETE"
+    assert captured["path"] == "/goodies/abc"
+    assert out["deleted"] == "abc"
+
+
 def test_build_ui_constructs():
     assert gradio_app.build_ui() is not None

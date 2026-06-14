@@ -157,6 +157,13 @@ class FileStorage:
                 return goodies[i]
         raise GoodyNotFoundError(goody_id)
 
+    def delete_goody(self, goody_id: str) -> None:
+        goodies = self._read_goodies()
+        remaining = [g for g in goodies if g.id != goody_id]
+        if len(remaining) == len(goodies):
+            raise GoodyNotFoundError(goody_id)
+        self._write_goodies(remaining)
+
     # -- journal ----------------------------------------------------------
 
     def append_journal(self, entry: JournalEntry) -> JournalEntry:

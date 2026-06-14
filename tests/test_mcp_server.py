@@ -12,6 +12,7 @@ TOOL_NAMES = {
     "add_goody",
     "list_goodies",
     "set_goody_status",
+    "delete_goody",
     "append_journal",
 }
 
@@ -123,3 +124,20 @@ def test_append_journal(tmp_path):
 
     anyio.run(scenario)
     assert "Pomohl jsem sousedovi." in storage.read_journal()  # mutated on disk
+
+
+def test_delete_goody(tmp_path):
+    storage = FileStorage(tmp_path)
+
+    async def scenario():
+        async with connected(build_mcp(storage)) as s:
+            added = _json(
+                await s.call_tool(
+                    "add_goody", {"date": "2026-06-14", "title": "X", "category": "self"}
+                )
+            )
+            deleted = _json(await s.call_tool("delete_goody", {"goody_id": added["id"]}))
+            assert deleted["deleted"] == added["id"]
+
+    anyio.run(scenario)
+    assert storage.list_goodies() == []  # mutated on disk

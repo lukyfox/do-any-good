@@ -78,6 +78,10 @@ def set_status(goody_id: str, status: str, summary: str) -> dict:
     )
 
 
+def delete_goody(goody_id: str) -> dict:
+    return _request("DELETE", f"/goodies/{goody_id}")
+
+
 def overview() -> dict:
     return _request("GET", "/overview")
 
@@ -161,7 +165,9 @@ def build_ui() -> gr.Blocks:
                 goody_dd = gr.Dropdown(label="Planned Goody", choices=[])
                 status_radio = gr.Radio(["done", "missed"], value="done", label="Status")
                 summary_box = gr.Textbox(label="Your summary (optional)")
-                record_btn = gr.Button("Record")
+                with gr.Row():
+                    record_btn = gr.Button("Record")
+                    delete_btn = gr.Button("Delete", variant="stop")
 
         def on_send(message, history):
             message = (message or "").strip()
@@ -204,6 +210,13 @@ def build_ui() -> gr.Blocks:
                 history = _assistant(history, f"Recorded **{label}** as {status}.")
             return history, history, _overview_md(), _planned_update(), ""
 
+        def on_delete(goody_id, history):
+            if goody_id:
+                result = delete_goody(goody_id)
+                note = "Deleted." if "error" not in result else result["error"]
+                history = _assistant(history, note)
+            return history, history, _overview_md(), _planned_update()
+
         chat_outputs = [txt, chatbot, state, overview_md, goody_dd]
         send.click(on_send, [txt, state], chat_outputs)
         txt.submit(on_send, [txt, state], chat_outputs)
@@ -217,6 +230,7 @@ def build_ui() -> gr.Blocks:
             [goody_dd, status_radio, summary_box, state],
             [chatbot, state, overview_md, goody_dd, summary_box],
         )
+        delete_btn.click(on_delete, [goody_dd, state], [chatbot, state, overview_md, goody_dd])
     return demo
 
 
