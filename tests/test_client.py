@@ -145,11 +145,16 @@ def test_delete_goody_calls_backend(monkeypatch):
     assert out["deleted"] == "abc"
 
 
-def test_view_choices_labels_with_status():
+def test_view_choices_only_done_and_missed():
     choices = gradio_app.view_choices(
-        [{"id": "1", "date": "2026-06-14", "title": "A", "status": "done"}, {"title": "no id"}]
+        [
+            {"id": "1", "date": "2026-06-14", "title": "A", "status": "done"},
+            {"id": "2", "date": "2026-06-15", "title": "B", "status": "missed"},
+            {"id": "3", "date": "2026-06-16", "title": "C", "status": "planned"},
+            {"title": "no id"},
+        ]
     )
-    assert choices == [("2026-06-14 - A [done]", "1")]
+    assert choices == [("2026-06-14 - A [done]", "1"), ("2026-06-15 - B [missed]", "2")]
 
 
 def test_on_view_returns_summary(monkeypatch):

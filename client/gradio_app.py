@@ -182,10 +182,11 @@ def _planned_update():
 
 
 def view_choices(goodies: list[dict]) -> list[tuple[str, str]]:
+    """Done/missed Goodies only (those that can carry a summary)."""
     return [
         (f"{g.get('date', '')} - {g.get('title', '')} [{g.get('status', '')}]", g["id"])
         for g in goodies
-        if g.get("id")
+        if g.get("id") and g.get("status") in ("done", "missed")
     ]
 
 
