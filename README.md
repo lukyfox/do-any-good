@@ -77,6 +77,35 @@ should reach the tools directly:
 python -m backend.app.mcp_server.server   # stdio transport
 ```
 
+## Run with Docker
+
+One image runs both services; compose starts them together.
+
+```powershell
+Copy-Item .env.example .env   # fill in your Foundry / Azure values
+docker compose up --build
+```
+
+Open the client at http://localhost:7860 (it reaches the backend at
+`http://backend:8000` on the compose network). Profile/Goody files persist in the
+`dag-data` volume; only the backend receives the `.env` secrets.
+
+### Deploy to Azure
+
+Build/push the image and run the two services (e.g. as two **Azure Container Apps**):
+
+```powershell
+az acr build -r <registry> -t do-any-good:latest .
+```
+
+- Provide the `.env` values as Container App env vars/secrets — they're never baked
+  into the image (`.env` is git- and docker-ignored).
+- Point the client's `DAG_BACKEND_URL` at the backend app's internal URL; expose
+  only the client publicly.
+- Mount Azure Files at `/app/data` for persistence across restarts (the RAG index
+  already lives in Azure AI Search; full storage migration to Foundry IQ is in
+  [PLAN.md](PLAN.md)).
+
 ## Development
 
 ```powershell
