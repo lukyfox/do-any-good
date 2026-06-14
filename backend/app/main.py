@@ -54,7 +54,8 @@ async def chat(
     storage: Annotated[FileStorage, Depends(get_storage)],
     llm: Annotated[LLMClient, Depends(get_agent_llm)],
 ) -> dict:
-    result = await Agent(storage, llm).run(req.message, req.history)
+    agent = Agent(storage, llm, web_search=get_settings().web_search_enabled)
+    result = await agent.run(req.message, req.history)
     return {"reply": result.reply, "history": result.history}
 
 
@@ -64,8 +65,10 @@ async def chat_stream(
     storage: Annotated[FileStorage, Depends(get_storage)],
     llm: Annotated[LLMClient, Depends(get_agent_llm)],
 ) -> StreamingResponse:
+    agent = Agent(storage, llm, web_search=get_settings().web_search_enabled)
+
     async def deltas():
-        async for delta in Agent(storage, llm).run_stream(req.message, req.history):
+        async for delta in agent.run_stream(req.message, req.history):
             yield delta
 
     return StreamingResponse(deltas(), media_type="text/plain; charset=utf-8")

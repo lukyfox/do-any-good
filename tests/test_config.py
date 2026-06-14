@@ -5,7 +5,7 @@ _ALL_VARS = (
     "FOUNDRY_API_KEY",
     "FOUNDRY_PROJECT",
     "FOUNDRY_MODEL",
-    "TAVILY_API_KEY",
+    "DAG_WEB_SEARCH",
     "DAG_DATA_DIR",
 )
 
@@ -17,6 +17,7 @@ def test_defaults_when_env_absent(monkeypatch):
     settings = get_settings()
     assert settings.foundry_configured is False
     assert settings.data_dir == "data"
+    assert settings.web_search_enabled is True
 
 
 def test_reads_env(monkeypatch):

@@ -49,7 +49,13 @@ def _headers(settings: Settings) -> dict[str, str]:
 
 
 def _to_responses_tool(tool: dict[str, Any]) -> dict[str, Any]:
-    """Map a {name, description, parameters} tool to the Responses API shape."""
+    """Map a tool to the Responses API shape.
+
+    Built-in tools (e.g. {"type": "web_search"}) pass through unchanged; a
+    {name, description, parameters} function tool is wrapped as a function tool.
+    """
+    if "name" not in tool:
+        return tool
     return {
         "type": "function",
         "name": tool["name"],

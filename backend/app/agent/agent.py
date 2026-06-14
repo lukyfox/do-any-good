@@ -25,6 +25,10 @@ from .suggestions import persist_one, persist_plan, suggest_daily, suggest_weekl
 
 MAX_ITERATIONS = 6
 
+# Built-in Responses API tool: Bing-grounded web search executed server-side by
+# Azure/Foundry (no external API). Added to the tool list when web search is on.
+WEB_SEARCH_TOOL = {"type": "web_search"}
+
 
 @dataclass
 class AgentResult:
@@ -54,12 +58,14 @@ class Agent:
         system_prompt: str = SYSTEM_PROMPT,
         max_iterations: int = MAX_ITERATIONS,
         safety: Callable[[str], SafetyVerdict] | None = None,
+        web_search: bool = True,
     ) -> None:
         self.storage = storage
         self.llm = llm
         self.system_prompt = system_prompt
         self.max_iterations = max_iterations
         self.safety = safety if safety is not None else LLMSafetyChecker(llm)
+        self.web_search = web_search
 
     def _turn(
         self,
@@ -84,6 +90,13 @@ class Agent:
             {"name": t.name, "description": t.description or "", "parameters": t.inputSchema}
             for t in listed.tools
         ]
+
+    async def _tool_list(self, session) -> list[dict[str, Any]]:
+        """MCP tools plus the built-in web_search tool when enabled."""
+        tools = await self._mcp_tools(session)
+        if self.web_search:
+            tools = [*tools, WEB_SEARCH_TOOL]
+        return tools
 
     def _build_working(
         self, history: list[dict[str, Any]], user_message: str, verdict: SafetyVerdict
@@ -116,7 +129,7 @@ class Agent:
         tools_called: list[str] = []
         reply = ""
         async with connected(build_mcp(self.storage)) as session:
-            tools = await self._mcp_tools(session)
+            tools = await self._tool_list(session)
             for _ in range(self.max_iterations):
                 result = self.llm.complete(working, tools=tools)
                 if not result.tool_calls:
@@ -158,7 +171,7 @@ class Agent:
 
         working = self._build_working(history, user_message, verdict)
         async with connected(build_mcp(self.storage)) as session:
-            tools = await self._mcp_tools(session)
+            tools = await self._tool_list(session)
             for _ in range(self.max_iterations):
                 result = LLMResult()
                 async for delta in self.llm.astream(working, tools=tools, result=result):

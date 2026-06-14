@@ -5,7 +5,7 @@ be something for others or something good you do for yourself (rest, learning, h
 joy). The agent suggests deeds, keeps a profile, tracks what you complete, and can act as a
 thematic diary.
 
-> This is the lean text MVP. Voice, image input, web search, a calendar view, and Foundry IQ
+> This is the lean text MVP. Voice, image input, a calendar view, and Foundry IQ
 > storage are deferred — see [PLAN.md](PLAN.md).
 
 ## Architecture

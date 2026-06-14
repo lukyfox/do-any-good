@@ -47,6 +47,13 @@ def test_build_payload_minimal():
     assert "tools" not in p and "text" not in p
 
 
+def test_build_payload_passes_builtin_tool_through():
+    tools = [{"name": "t", "parameters": {"type": "object"}}, {"type": "web_search"}]
+    payload = build_responses_payload([{"role": "user", "content": "hi"}], model=None, tools=tools)
+    assert {"type": "web_search"} in payload["tools"]
+    assert any(t.get("type") == "function" and t.get("name") == "t" for t in payload["tools"])
+
+
 def test_build_payload_tools_and_schema():
     tools = [{"name": "t", "description": "d", "parameters": {"type": "object"}}]
     schema = {"name": "out", "schema": {"type": "object"}}

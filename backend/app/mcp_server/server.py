@@ -20,7 +20,6 @@ from ..storage import (
     JournalEntry,
     UserProfile,
 )
-from ..web_search import web_search as run_web_search
 
 
 def build_mcp(storage: FileStorage) -> FastMCP:
@@ -121,13 +120,6 @@ def build_mcp(storage: FileStorage) -> FastMCP:
         """Append a free-form journal entry, optionally linked to a Goody id."""
         entry = JournalEntry(text=text, title=title, goody_id=goody_id)
         return storage.append_journal(entry).model_dump(mode="json")
-
-    @mcp.tool()
-    async def web_search(query: str, max_results: int = 5) -> dict[str, Any]:
-        """Search the web for current campaigns, charities, or local volunteer
-        opportunities (e.g. donio.cz, nearby hospitals/charities). Returns titles,
-        URLs, and snippets. Use when the user wants real, external options."""
-        return await run_web_search(query, max_results)
 
     return mcp
 

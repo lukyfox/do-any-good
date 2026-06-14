@@ -76,9 +76,15 @@ def test_agent_executes_tool_then_replies(tmp_path):
 def test_agent_exposes_mcp_tools(tmp_path):
     llm = _RecordingLLM()
     anyio.run(Agent(FileStorage(tmp_path), llm, safety=_allow).run, "hi")
-    names = {t["name"] for t in llm.tools_seen}
+    names = {t["name"] for t in llm.tools_seen if "name" in t}
     assert MCP_TOOL_NAMES <= names
-    assert all("parameters" in t for t in llm.tools_seen)
+    assert {"type": "web_search"} in llm.tools_seen  # built-in web search offered
+
+
+def test_agent_web_search_can_be_disabled(tmp_path):
+    llm = _RecordingLLM()
+    anyio.run(Agent(FileStorage(tmp_path), llm, safety=_allow, web_search=False).run, "hi")
+    assert {"type": "web_search"} not in llm.tools_seen
 
 
 def test_agent_stops_at_max_iterations(tmp_path):
