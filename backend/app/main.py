@@ -14,6 +14,7 @@ from .agent import Agent
 from .config import get_settings
 from .llm_client import LLMClient, get_llm_client
 from .overview import build_overview
+from .rag import RagStore, get_rag_store
 from .storage import FileStorage, GoodyNotFoundError, GoodyStatus, JournalEntry
 
 app = FastAPI(title="Do Any Good backend")
@@ -41,6 +42,10 @@ def get_storage() -> FileStorage:
 
 def get_agent_llm() -> LLMClient:
     return get_llm_client()
+
+
+def get_rag() -> RagStore:
+    return get_rag_store()
 
 
 @app.get("/health")
@@ -108,11 +113,19 @@ async def update_goody_status(
     goody_id: str,
     body: StatusUpdate,
     storage: Annotated[FileStorage, Depends(get_storage)],
+    rag: Annotated[RagStore, Depends(get_rag)],
 ) -> dict:
     try:
         goody = storage.set_goody_status(goody_id, body.status, body.summary)
     except GoodyNotFoundError as err:
         raise HTTPException(status_code=404, detail="Goody not found") from err
+    if goody.status == GoodyStatus.DONE:
+        profile = storage.load_profile()
+        if profile is not None:
+            try:
+                rag.save(profile, goody)
+            except Exception:  # RAG is best-effort; never block marking done
+                pass
     return goody.model_dump(mode="json")
 
 

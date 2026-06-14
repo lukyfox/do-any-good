@@ -2,9 +2,9 @@ from datetime import date
 
 from fastapi.testclient import TestClient
 
-from backend.app.main import app, get_storage
+from backend.app.main import app, get_rag, get_storage
 from backend.app.overview import build_overview
-from backend.app.storage import FileStorage, Goody, GoodyCategory, GoodyStatus
+from backend.app.storage import FileStorage, Goody, GoodyCategory, GoodyStatus, UserProfile
 
 
 def _seed(storage):
@@ -101,5 +101,45 @@ def test_delete_goody_endpoint(tmp_path):
         assert client.delete(f"/goodies/{g.id}").status_code == 200
         assert storage.get_goody(g.id) is None
         assert client.delete("/goodies/nope").status_code == 404
+    finally:
+        app.dependency_overrides.clear()
+
+
+class _FakeRag:
+    def __init__(self):
+        self.saved = []
+
+    def save(self, profile, goody):
+        self.saved.append((profile, goody))
+
+    def find_match(self, profile):
+        return None
+
+
+def test_mark_done_saves_to_rag(tmp_path):
+    storage = FileStorage(tmp_path)
+    storage.save_profile(UserProfile(nickname="Aleš", preferences=["x"]))
+    g = storage.add_goody(Goody(date=date(2026, 6, 13), title="X", category=GoodyCategory.SELF))
+    rag = _FakeRag()
+    app.dependency_overrides[get_storage] = lambda: storage
+    app.dependency_overrides[get_rag] = lambda: rag
+    try:
+        r = TestClient(app).post(f"/goodies/{g.id}/status", json={"status": "done"})
+        assert r.status_code == 200
+        assert [saved[1].id for saved in rag.saved] == [g.id]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_mark_missed_does_not_save_to_rag(tmp_path):
+    storage = FileStorage(tmp_path)
+    storage.save_profile(UserProfile(nickname="Aleš"))
+    g = storage.add_goody(Goody(date=date(2026, 6, 13), title="X", category=GoodyCategory.SELF))
+    rag = _FakeRag()
+    app.dependency_overrides[get_storage] = lambda: storage
+    app.dependency_overrides[get_rag] = lambda: rag
+    try:
+        TestClient(app).post(f"/goodies/{g.id}/status", json={"status": "missed"})
+        assert rag.saved == []
     finally:
         app.dependency_overrides.clear()

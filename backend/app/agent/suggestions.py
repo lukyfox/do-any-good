@@ -138,3 +138,33 @@ def persist_plan(
     storage: FileStorage, suggestions: list[GoodySuggestion], start: date_cls
 ) -> list[Goody]:
     return [persist_one(storage, s, start + timedelta(days=i)) for i, s in enumerate(suggestions)]
+
+
+def goody_to_suggestion(goody: Goody) -> GoodySuggestion:
+    """Convert a stored Goody (e.g. a RAG match) into a fresh suggestion."""
+    note = "Suggested because it worked for someone with similar interests."
+    return GoodySuggestion(
+        title=goody.title,
+        description=goody.description,
+        category=goody.category,
+        why=goody.why or note,
+        how=goody.how,
+        bonus=goody.bonus,
+        link=goody.link,
+    )
+
+
+def include_rag_match(
+    suggestions: list[GoodySuggestion], match: GoodySuggestion
+) -> list[GoodySuggestion]:
+    """Splice one RAG-sourced suggestion in, preserving plan size and self-balance.
+
+    Replaces the last 'others' deed (so a self-Goody is kept); appends if there is
+    none. No-op when the match title is already present.
+    """
+    if any(s.title == match.title for s in suggestions):
+        return suggestions
+    for i in range(len(suggestions) - 1, -1, -1):
+        if suggestions[i].category == GoodyCategory.OTHERS:
+            return [*suggestions[:i], match, *suggestions[i + 1 :]]
+    return [*suggestions, match]

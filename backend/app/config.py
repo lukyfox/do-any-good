@@ -22,6 +22,12 @@ class Settings:
     foundry_project: str | None = None
     foundry_model: str | None = None
     web_search_enabled: bool = True
+    foundry_embedding_model: str | None = None
+    foundry_embeddings_url: str | None = None
+    embedding_dimensions: int = 1536
+    azure_search_endpoint: str | None = None
+    azure_search_key: str | None = None
+    azure_search_index: str = "dag-goodies"
     data_dir: str = "data"
 
     @property
@@ -35,6 +41,24 @@ class Settings:
         url = self.foundry_responses_url or ""
         return "openai.azure.com" in url
 
+    @property
+    def embeddings_url(self) -> str:
+        """Azure OpenAI embeddings endpoint (derived from the responses URL)."""
+        if self.foundry_embeddings_url:
+            return self.foundry_embeddings_url
+        return (self.foundry_responses_url or "").replace("/responses", "/embeddings")
+
+    @property
+    def rag_configured(self) -> bool:
+        """True when Azure AI Search + an embeddings deployment are available."""
+        return bool(
+            self.azure_search_endpoint
+            and self.azure_search_key
+            and self.foundry_embedding_model
+            and self.foundry_api_key
+            and self.embeddings_url
+        )
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -45,5 +69,11 @@ def get_settings() -> Settings:
         foundry_project=os.getenv("FOUNDRY_PROJECT"),
         foundry_model=os.getenv("FOUNDRY_MODEL"),
         web_search_enabled=os.getenv("DAG_WEB_SEARCH", "true").lower() != "false",
+        foundry_embedding_model=os.getenv("FOUNDRY_EMBEDDING_MODEL"),
+        foundry_embeddings_url=os.getenv("FOUNDRY_EMBEDDINGS_URL"),
+        embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", "1536")),
+        azure_search_endpoint=os.getenv("AZURE_SEARCH_ENDPOINT"),
+        azure_search_key=os.getenv("AZURE_SEARCH_KEY"),
+        azure_search_index=os.getenv("AZURE_SEARCH_INDEX", "dag-goodies"),
         data_dir=os.getenv("DAG_DATA_DIR", "data"),
     )

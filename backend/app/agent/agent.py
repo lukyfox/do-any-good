@@ -18,10 +18,18 @@ from mcp.shared.memory import create_connected_server_and_client_session as conn
 
 from ..llm_client import LLMClient, LLMResult
 from ..mcp_server import build_mcp
+from ..rag import RagStore, get_rag_store
 from ..storage import FileStorage, Goody
 from .prompts import SYSTEM_PROMPT, profile_context
 from .safety import LLMSafetyChecker, SafetyDecision, SafetyVerdict, refusal_message
-from .suggestions import persist_one, persist_plan, suggest_daily, suggest_weekly
+from .suggestions import (
+    goody_to_suggestion,
+    include_rag_match,
+    persist_one,
+    persist_plan,
+    suggest_daily,
+    suggest_weekly,
+)
 
 MAX_ITERATIONS = 6
 
@@ -59,6 +67,7 @@ class Agent:
         max_iterations: int = MAX_ITERATIONS,
         safety: Callable[[str], SafetyVerdict] | None = None,
         web_search: bool = True,
+        rag: RagStore | None = None,
     ) -> None:
         self.storage = storage
         self.llm = llm
@@ -66,6 +75,7 @@ class Agent:
         self.max_iterations = max_iterations
         self.safety = safety if safety is not None else LLMSafetyChecker(llm)
         self.web_search = web_search
+        self.rag = rag if rag is not None else get_rag_store()
 
     def _turn(
         self,
@@ -204,7 +214,15 @@ class Agent:
         return persist_one(self.storage, suggestion, on)
 
     def suggest_week(self, start: date | None = None) -> list[Goody]:
-        """Generate and persist a 7-day plan (defaults to starting tomorrow)."""
+        """Generate and persist a 7-day plan (defaults to starting tomorrow).
+
+        Includes one RAG-matched Goody from a similar profile when available.
+        """
         start = start or date.today() + timedelta(days=1)
-        suggestions = suggest_weekly(self.llm, self.storage.load_profile())
+        profile = self.storage.load_profile()
+        suggestions = suggest_weekly(self.llm, profile)
+        if profile is not None:
+            match = self.rag.find_match(profile)
+            if match is not None:
+                suggestions = include_rag_match(suggestions, goody_to_suggestion(match))
         return persist_plan(self.storage, suggestions, start)
