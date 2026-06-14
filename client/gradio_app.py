@@ -15,6 +15,30 @@ import requests
 BACKEND_URL = os.getenv("DAG_BACKEND_URL", "http://localhost:8000").rstrip("/")
 REQUEST_TIMEOUT_SECONDS = 60
 
+# fireworks-js (https://github.com/crashmax-dev/fireworks-js) loaded from CDN; a
+# small helper fires a brief full-screen burst, called when a Goody is marked done.
+FIREWORKS_HEAD = """
+<script src="https://cdn.jsdelivr.net/npm/fireworks-js@2.x/dist/index.umd.js"></script>
+<script>
+window.dagCelebrate = function () {
+  try {
+    var FW = window.Fireworks && (window.Fireworks.default || window.Fireworks);
+    if (!FW) return;
+    var el = document.getElementById('dag-fireworks');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'dag-fireworks';
+      el.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:99999;';
+      document.body.appendChild(el);
+    }
+    var fw = new FW(el, { intensity: 25, explosion: 5 });
+    fw.start();
+    setTimeout(function () { fw.stop(); }, 2500);
+  } catch (e) { console.error('fireworks failed', e); }
+};
+</script>
+"""
+
 
 def _request(
     method: str, path: str, *, json: dict | None = None, params: dict | None = None
@@ -240,10 +264,19 @@ def build_ui() -> gr.Blocks:
             [goody_dd, status_radio, summary_box, state],
             [chatbot, state, overview_md, goody_dd, summary_box],
         )
+        record_btn.click(
+            None,
+            [goody_dd, status_radio],
+            None,
+            js=(
+                "(gid, status) => { if (gid && status === 'done' && window.dagCelebrate)"
+                " window.dagCelebrate(); }"
+            ),
+        )
         delete_btn.click(on_delete, [goody_dd, state], [chatbot, state, overview_md, goody_dd])
         demo.load(lambda: (_overview_md(), _planned_update()), None, [overview_md, goody_dd])
     return demo
 
 
 if __name__ == "__main__":
-    build_ui().launch()
+    build_ui().launch(head=FIREWORKS_HEAD)
