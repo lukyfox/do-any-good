@@ -145,5 +145,29 @@ def test_delete_goody_calls_backend(monkeypatch):
     assert out["deleted"] == "abc"
 
 
+def test_view_choices_labels_with_status():
+    choices = gradio_app.view_choices(
+        [{"id": "1", "date": "2026-06-14", "title": "A", "status": "done"}, {"title": "no id"}]
+    )
+    assert choices == [("2026-06-14 - A [done]", "1")]
+
+
+def test_on_view_returns_summary(monkeypatch):
+    monkeypatch.setattr(
+        gradio_app,
+        "_request",
+        lambda *a, **k: {"goodies": [{"id": "1", "user_summary": "felt great"}]},
+    )
+    assert gradio_app.on_view("1") == "felt great"
+    assert gradio_app.on_view("") == ""
+
+
+def test_on_view_no_summary(monkeypatch):
+    monkeypatch.setattr(
+        gradio_app, "_request", lambda *a, **k: {"goodies": [{"id": "1"}]}
+    )
+    assert gradio_app.on_view("1") == "(no summary recorded)"
+
+
 def test_build_ui_constructs():
     assert gradio_app.build_ui() is not None

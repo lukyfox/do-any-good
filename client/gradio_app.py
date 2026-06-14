@@ -18,6 +18,7 @@ REQUEST_TIMEOUT_SECONDS = 60
 # fireworks-js (https://github.com/crashmax-dev/fireworks-js) loaded from CDN; a
 # small helper fires a brief full-screen burst, called when a Goody is marked done.
 FIREWORKS_HEAD = """
+<style>.dag-overview { max-height: 320px; overflow-y: auto; }</style>
 <script src="https://cdn.jsdelivr.net/npm/fireworks-js@2.x/dist/index.umd.js"></script>
 <script>
 window.dagCelebrate = function () {
@@ -180,6 +181,27 @@ def _planned_update():
     return gr.update(choices=planned_choices(list_goodies(status="planned").get("goodies", [])))
 
 
+def view_choices(goodies: list[dict]) -> list[tuple[str, str]]:
+    return [
+        (f"{g.get('date', '')} - {g.get('title', '')} [{g.get('status', '')}]", g["id"])
+        for g in goodies
+        if g.get("id")
+    ]
+
+
+def _view_update():
+    return gr.update(choices=view_choices(list_goodies().get("goodies", [])))
+
+
+def on_view(goody_id: str) -> str:
+    if not goody_id:
+        return ""
+    match = next((g for g in list_goodies().get("goodies", []) if g.get("id") == goody_id), None)
+    if match is None:
+        return ""
+    return match.get("user_summary") or "(no summary recorded)"
+
+
 def build_ui() -> gr.Blocks:
     with gr.Blocks(title="Do Any Good") as demo:
         gr.Markdown("# Do Any Good\nDo one good deed a day - a *Goody*.")
@@ -192,8 +214,10 @@ def build_ui() -> gr.Blocks:
                     send = gr.Button("Send", variant="primary")
                     today_btn = gr.Button("Suggest today's Goody")
                     week_btn = gr.Button("Plan my week")
+                view_dd = gr.Dropdown(label="View a Goody's summary", choices=[])
+                summary_view = gr.Textbox(label="Goody summary", interactive=False, lines=3)
             with gr.Column(scale=2):
-                overview_md = gr.Markdown("_No data yet._")
+                overview_md = gr.Markdown("_No data yet._", elem_classes=["dag-overview"])
                 refresh_btn = gr.Button("Refresh overview")
                 gr.Markdown("### Record a Goody")
                 goody_dd = gr.Dropdown(label="Planned Goody", choices=[])
@@ -228,41 +252,53 @@ def build_ui() -> gr.Blocks:
             goody = result.get("goody")
             body = format_goody(goody) if goody else result.get("error", "(failed)")
             history = _assistant(history, f"Today's Goody:\n\n{body}")
-            return history, history, _overview_md(), _planned_update()
+            return history, history, _overview_md(), _planned_update(), _view_update()
 
         def on_week(history):
             result = plan_week()
             goodies = result.get("goodies")
             body = format_plan(goodies) if goodies else result.get("error", "(failed)")
             history = _assistant(history, f"Your week:\n\n{body}")
-            return history, history, _overview_md(), _planned_update()
+            return history, history, _overview_md(), _planned_update(), _view_update()
 
         def on_record(goody_id, status, summary, history):
+            shown_summary = ""
             if goody_id:
                 result = set_status(goody_id, status, summary)
                 label = result.get("title", goody_id) if "error" not in result else result["error"]
                 history = _assistant(history, f"Recorded **{label}** as {status}.")
-            return history, history, _overview_md(), _planned_update(), ""
+                shown_summary = summary or "(no summary)"
+            return (
+                history,
+                history,
+                _overview_md(),
+                _planned_update(),
+                _view_update(),
+                shown_summary,
+                "",
+            )
 
         def on_delete(goody_id, history):
             if goody_id:
                 result = delete_goody(goody_id)
                 note = "Deleted." if "error" not in result else result["error"]
                 history = _assistant(history, note)
-            return history, history, _overview_md(), _planned_update()
+            return history, history, _overview_md(), _planned_update(), _view_update()
 
         chat_outputs = [txt, chatbot, state, overview_md, goody_dd]
         send.click(on_send, [txt, state], chat_outputs)
         txt.submit(on_send, [txt, state], chat_outputs)
-        today_btn.click(on_today, [state], [chatbot, state, overview_md, goody_dd])
-        week_btn.click(on_week, [state], [chatbot, state, overview_md, goody_dd])
+        today_btn.click(on_today, [state], [chatbot, state, overview_md, goody_dd, view_dd])
+        week_btn.click(on_week, [state], [chatbot, state, overview_md, goody_dd, view_dd])
         refresh_btn.click(
-            lambda: (_overview_md(), _planned_update()), None, [overview_md, goody_dd]
+            lambda: (_overview_md(), _planned_update(), _view_update()),
+            None,
+            [overview_md, goody_dd, view_dd],
         )
         record_btn.click(
             on_record,
             [goody_dd, status_radio, summary_box, state],
-            [chatbot, state, overview_md, goody_dd, summary_box],
+            [chatbot, state, overview_md, goody_dd, view_dd, summary_view, summary_box],
         )
         record_btn.click(
             None,
@@ -273,8 +309,15 @@ def build_ui() -> gr.Blocks:
                 " window.dagCelebrate(); }"
             ),
         )
-        delete_btn.click(on_delete, [goody_dd, state], [chatbot, state, overview_md, goody_dd])
-        demo.load(lambda: (_overview_md(), _planned_update()), None, [overview_md, goody_dd])
+        delete_btn.click(
+            on_delete, [goody_dd, state], [chatbot, state, overview_md, goody_dd, view_dd]
+        )
+        view_dd.change(on_view, view_dd, summary_view)
+        demo.load(
+            lambda: (_overview_md(), _planned_update(), _view_update()),
+            None,
+            [overview_md, goody_dd, view_dd],
+        )
     return demo
 
 
