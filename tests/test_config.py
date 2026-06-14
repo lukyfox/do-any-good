@@ -5,6 +5,7 @@ _ALL_VARS = (
     "FOUNDRY_API_KEY",
     "FOUNDRY_PROJECT",
     "FOUNDRY_MODEL",
+    "TAVILY_API_KEY",
     "DAG_DATA_DIR",
 )
 

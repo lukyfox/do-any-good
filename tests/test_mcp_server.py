@@ -14,6 +14,7 @@ TOOL_NAMES = {
     "set_goody_status",
     "delete_goody",
     "append_journal",
+    "web_search",
 }
 
 
@@ -141,3 +142,17 @@ def test_delete_goody(tmp_path):
 
     anyio.run(scenario)
     assert storage.list_goodies() == []  # mutated on disk
+
+
+def test_web_search_tool_not_configured(tmp_path, monkeypatch):
+    from backend.app import web_search as web_search_mod
+    from backend.app.config import Settings
+
+    monkeypatch.setattr(web_search_mod, "get_settings", lambda: Settings())
+
+    async def scenario():
+        async with connected(build_mcp(FileStorage(tmp_path))) as s:
+            result = _json(await s.call_tool("web_search", {"query": "campaigns"}))
+            assert "error" in result
+
+    anyio.run(scenario)

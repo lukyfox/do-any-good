@@ -21,6 +21,7 @@ class Settings:
     foundry_api_key: str | None = None
     foundry_project: str | None = None
     foundry_model: str | None = None
+    tavily_api_key: str | None = None
     data_dir: str = "data"
 
     @property
@@ -43,5 +44,6 @@ def get_settings() -> Settings:
         foundry_api_key=os.getenv("FOUNDRY_API_KEY"),
         foundry_project=os.getenv("FOUNDRY_PROJECT"),
         foundry_model=os.getenv("FOUNDRY_MODEL"),
+        tavily_api_key=os.getenv("TAVILY_API_KEY"),
         data_dir=os.getenv("DAG_DATA_DIR", "data"),
     )
