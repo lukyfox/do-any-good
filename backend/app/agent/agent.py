@@ -95,7 +95,11 @@ class Agent:
                 history, user_message, refusal_message(verdict), [], verdict.decision
             )
 
-        system_parts = [self.system_prompt, profile_context(self.storage.load_profile())]
+        system_parts = [
+            self.system_prompt,
+            f"Today's date is {date.today().isoformat()}.",
+            profile_context(self.storage.load_profile()),
+        ]
         if verdict.decision == SafetyDecision.WARN and verdict.reason:
             system_parts.append(f"Safety note for this request: {verdict.reason}")
         working: list[dict[str, Any]] = [{"role": "system", "content": "\n\n".join(system_parts)}]

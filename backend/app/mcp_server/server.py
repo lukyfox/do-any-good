@@ -65,8 +65,8 @@ def build_mcp(storage: FileStorage) -> FastMCP:
         how: str | None = None,
         bonus: str | None = None,
     ) -> dict[str, Any]:
-        """Add a planned Goody. `date` is ISO (YYYY-MM-DD); `category` is
-        'self' or 'others'."""
+        """Add a planned Goody. `date` is ISO (YYYY-MM-DD) — today or a future day;
+        `category` is 'self' or 'others'."""
         goody = Goody(
             date=date_cls.fromisoformat(date),
             title=title,

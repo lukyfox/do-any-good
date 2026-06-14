@@ -1,3 +1,5 @@
+from datetime import date
+
 import anyio
 
 from backend.app.agent import Agent, SafetyDecision, SafetyVerdict
@@ -92,3 +94,9 @@ def test_profile_update_bumps_version(tmp_path):
     profile = storage.load_profile()
     assert profile.version == 2
     assert profile.age == 30
+
+
+def test_today_date_in_system_context(tmp_path):
+    llm = _CapturingLLM()
+    anyio.run(Agent(FileStorage(tmp_path), llm, safety=_allow).run, "hi")
+    assert date.today().isoformat() in _system_text(llm)
