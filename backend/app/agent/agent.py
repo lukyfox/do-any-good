@@ -16,7 +16,7 @@ from typing import Any
 
 from mcp.shared.memory import create_connected_server_and_client_session as connected
 
-from ..llm_client import LLMClient
+from ..llm_client import LLMClient, LLMResult
 from ..mcp_server import build_mcp
 from ..storage import FileStorage, Goody
 from .prompts import SYSTEM_PROMPT, profile_context
@@ -160,16 +160,10 @@ class Agent:
         async with connected(build_mcp(self.storage)) as session:
             tools = await self._mcp_tools(session)
             for _ in range(self.max_iterations):
-                gen = self.llm.stream(working, tools=tools)
-                result = None
-                while True:
-                    try:
-                        delta = next(gen)
-                    except StopIteration as stop:
-                        result = stop.value
-                        break
+                result = LLMResult()
+                async for delta in self.llm.astream(working, tools=tools, result=result):
                     yield delta
-                if result is None or not result.tool_calls:
+                if not result.tool_calls:
                     return
                 for call in result.tool_calls:
                     output = await session.call_tool(call.name, call.arguments)

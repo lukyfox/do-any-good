@@ -8,10 +8,11 @@ json_schema structured output; MockLLMClient is used offline and in tests.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
 import requests
 
 from .config import Settings, get_settings
@@ -124,18 +125,32 @@ def parse_responses(payload: dict[str, Any]) -> LLMResult:
     return result
 
 
-def _iter_sse_data(response) -> Iterator[dict[str, Any]]:
-    """Yield parsed JSON objects from the `data:` lines of an SSE response."""
-    for raw in response.iter_lines(decode_unicode=True):
-        if not raw or not raw.startswith("data:"):
-            continue
-        payload = raw[5:].strip()
-        if payload == "[DONE]":
-            return
-        try:
-            yield json.loads(payload)
-        except json.JSONDecodeError:
-            continue
+def _parse_sse_line(raw: str) -> dict[str, Any] | None:
+    """Parse one SSE `data:` line into a JSON object (None for blanks/[DONE])."""
+    if not raw or not raw.startswith("data:"):
+        return None
+    payload = raw[5:].strip()
+    if not payload or payload == "[DONE]":
+        return None
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+
+
+def _sse_event_to_delta(data: dict[str, Any], result: LLMResult) -> str | None:
+    """Apply one Responses API stream event to `result`; return any text delta."""
+    kind = data.get("type")
+    if kind == "response.output_text.delta":
+        delta = data.get("delta", "")
+        if delta:
+            result.text = (result.text or "") + delta
+            return delta
+    elif kind == "response.output_item.done":
+        item = data.get("item", {})
+        if item.get("type") == "function_call":
+            result.tool_calls.append(_function_call_from_item(item))
+    return None
 
 
 def _function_call_from_item(item: dict[str, Any]) -> ToolCall:
@@ -162,17 +177,24 @@ class LLMClient:
     ) -> LLMResult:
         raise NotImplementedError
 
-    def stream(
-        self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None
-    ) -> Iterator[str]:
-        """Yield reply text deltas and return the full LLMResult.
+    async def astream(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        result: LLMResult | None = None,
+    ) -> AsyncIterator[str]:
+        """Yield reply text deltas, recording the outcome into `result`.
 
         Default: a non-streaming fallback that emits the whole reply as one chunk.
         """
-        result = self.complete(messages, tools=tools)
-        if result.text:
-            yield result.text
-        return result
+        outcome = self.complete(messages, tools=tools)
+        if result is not None:
+            result.text = outcome.text
+            result.tool_calls = outcome.tool_calls
+            result.parsed = outcome.parsed
+        if outcome.text:
+            yield outcome.text
 
 
 class MockLLMClient(LLMClient):
@@ -197,8 +219,11 @@ class MockLLMClient(LLMClient):
 class FoundryResponsesClient(LLMClient):
     """Calls the Azure/Foundry Responses API."""
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self, settings: Settings | None = None, transport: httpx.AsyncBaseTransport | None = None
+    ) -> None:
         self._settings = settings or get_settings()
+        self._transport = transport
 
     def complete(self, messages, *, tools=None, response_schema=None) -> LLMResult:
         s = self._settings
@@ -212,32 +237,24 @@ class FoundryResponsesClient(LLMClient):
         response.raise_for_status()
         return parse_responses(response.json())
 
-    def stream(self, messages, *, tools=None) -> Iterator[str]:
+    async def astream(self, messages, *, tools=None, result=None) -> AsyncIterator[str]:
+        result = result if result is not None else LLMResult()
         s = self._settings
         payload = build_responses_payload(messages, model=s.foundry_model, tools=tools)
         payload["stream"] = True
         url = (s.foundry_responses_url or "").rstrip("/")
-        result = LLMResult()
-        with requests.post(
-            url,
-            json=payload,
-            headers=_headers(s),
-            timeout=REQUEST_TIMEOUT_SECONDS,
-            stream=True,
-        ) as response:
-            response.raise_for_status()
-            for data in _iter_sse_data(response):
-                kind = data.get("type")
-                if kind == "response.output_text.delta":
-                    delta = data.get("delta", "")
+        async with httpx.AsyncClient(
+            timeout=REQUEST_TIMEOUT_SECONDS, transport=self._transport
+        ) as client:
+            async with client.stream("POST", url, json=payload, headers=_headers(s)) as response:
+                response.raise_for_status()
+                async for raw in response.aiter_lines():
+                    data = _parse_sse_line(raw)
+                    if data is None:
+                        continue
+                    delta = _sse_event_to_delta(data, result)
                     if delta:
-                        result.text = (result.text or "") + delta
                         yield delta
-                elif kind == "response.output_item.done":
-                    item = data.get("item", {})
-                    if item.get("type") == "function_call":
-                        result.tool_calls.append(_function_call_from_item(item))
-        return result
 
 
 def get_llm_client() -> LLMClient:
